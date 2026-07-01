@@ -9,8 +9,6 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 5173
       - key: APP_BASE_URL
         sync: false
       - key: ADMIN_INITIAL_PHONE
@@ -22,4 +20,8 @@ services:
       - key: TRUST_PROXY
         value: "1"
       - key: DB_PATH
-        value: /opt/render/project/src/data/pardogo.sqlite
+        value: /var/data/pardogo.sqlite
+    disk:
+      name: pardogo-data
+      mountPath: /var/data
+      sizeGB: 1
