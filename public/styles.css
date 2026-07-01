@@ -159,6 +159,21 @@ code {
   align-items: stretch;
   padding: 58px 0 8px;
 }
+.hero-content.compact-hero {
+  grid-template-columns: 1fr;
+  padding: 26px 0 0;
+}
+.compact-hero-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.compact-hero-title h1 {
+  margin: 0;
+  font-size: clamp(30px, 5.2vw, 54px);
+  letter-spacing: -.04em;
+}
 .eyebrow, .section-kicker {
   margin: 0 0 10px;
   color: var(--brand-3);
@@ -262,6 +277,24 @@ h2 { margin: 0 0 12px; letter-spacing: -.03em; color: #0f172a; }
   height: 5px;
   background: linear-gradient(90deg, var(--brand), var(--brand-3), var(--accent));
 }
+.minimal-login {
+  max-width: 640px;
+  margin: 0 auto;
+}
+.minimal-login .auth-entry-actions {
+  grid-template-columns: 1fr;
+}
+.login-permissions {
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid #dbeaf2;
+  background: linear-gradient(180deg, #f7fcff, #f1f8ff);
+}
+.login-permissions h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
 .login-focus {
   border-color: rgba(34, 211, 238, .34);
   background:
@@ -322,6 +355,7 @@ body.is-logged-in #loggedCard { display: flex !important; }
 body:not(.is-logged-in) #loggedCard { display: none !important; }
 body:not(.is-logged-in) .tabs,
 body:not(.is-logged-in) .panel { display: none !important; }
+body:not(.is-logged-in) .session { display: none; }
 
 /* FORM */
 .form { display: grid; gap: 13px; }

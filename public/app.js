@@ -316,6 +316,10 @@ function permissionTone(state) {
   return 'warn';
 }
 
+function hasContactPicker() {
+  return Boolean(navigator.contacts && typeof navigator.contacts.select === 'function');
+}
+
 async function queryPermissionState(name) {
   if (!navigator.permissions?.query) return 'indisponivel';
   try {
@@ -324,6 +328,15 @@ async function queryPermissionState(name) {
   } catch {
     return 'indisponivel';
   }
+}
+
+async function contactPermissionState() {
+  if (!hasContactPicker()) return 'indisponivel';
+  try {
+    const state = await queryPermissionState('contacts');
+    if (state !== 'indisponivel') return state;
+  } catch {}
+  return 'disponivel-no-dispositivo';
 }
 
 function renderPermissionsList(items = []) {
@@ -359,14 +372,49 @@ async function openAppSettings() {
 async function updateMobilePermissionsStatus() {
   const locationState = await queryPermissionState('geolocation');
   const notificationState = 'Notification' in window ? (Notification.permission || 'default') : 'indisponivel';
+  const cameraState = await queryPermissionState('camera');
+  const microphoneState = await queryPermissionState('microphone');
+  const contactsState = await contactPermissionState();
   const items = [
     { label: 'Localização', state: locationState },
-    { label: 'Notificações', state: notificationState }
+    { label: 'Notificações', state: notificationState },
+    { label: 'Câmera', state: cameraState },
+    { label: 'Microfone', state: microphoneState },
+    { label: 'Contatos', state: contactsState }
   ];
   renderPermissionsList(items);
-  const shouldShowSettings = [locationState, notificationState].includes('denied');
+  const shouldShowSettings = [locationState, notificationState, cameraState, microphoneState, contactsState].includes('denied');
   toggleAppSettingsButton(shouldShowSettings);
   setFormStatus('#permissionsStatus', 'Status de permissões atualizado.', 'ok');
+}
+
+async function requestEssentialPermissions() {
+  const messages = [];
+  if (navigator.mediaDevices?.getUserMedia) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      stream.getTracks().forEach(track => track.stop());
+      messages.push('câmera/microfone ok');
+    } catch {
+      messages.push('câmera/microfone negado');
+    }
+  } else {
+    messages.push('câmera/microfone indisponível');
+  }
+
+  if (hasContactPicker()) {
+    try {
+      await navigator.contacts.select(['name'], { multiple: false });
+      messages.push('contatos ok');
+    } catch {
+      messages.push('contatos não concedido');
+    }
+  } else {
+    messages.push('contatos indisponível');
+  }
+
+  await updateMobilePermissionsStatus();
+  setFormStatus('#permissionsStatus', `Permissões essenciais: ${messages.join(' • ')}.`, 'ok');
 }
 
 async function requestLocationPermission() {
@@ -1545,6 +1593,7 @@ function wireEvents() {
   });
   $('#requestLocationPermissionBtn')?.addEventListener('click', requestLocationPermission);
   $('#requestNotificationPermissionBtn')?.addEventListener('click', requestNotificationPermission);
+  $('#requestEssentialPermissionsBtn')?.addEventListener('click', requestEssentialPermissions);
   $('#openAppSettingsBtn')?.addEventListener('click', openAppSettings);
 
   $('#registerRole')?.addEventListener('change', event => switchRegisterRole(event.target.value));

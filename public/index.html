@@ -16,7 +16,7 @@
         <span class="brand-mark">PG</span>
         <div>
           <strong>PardoGo</strong>
-          <small>Transporte urbano para cidade pequena</small>
+          <small>Mobilidade local</small>
         </div>
       </div>
       <div class="session">
@@ -25,14 +25,11 @@
         <button id="logoutBtn" class="ghost hidden">Sair</button>
       </div>
     </nav>
-    <section class="hero-content">
-      <div>
-        <p class="eyebrow">Plataforma de mobilidade local</p>
-        <h1>Corridas locais com visual moderno e base pronta para virar aplicativo Android.</h1>
-        <p>Sistema completo para operação web e mobile, com API configurável, mapa, localização em tempo real e gestão administrativa.</p>
+    <section class="hero-content compact-hero">
+      <div class="compact-hero-title">
+        <h1>PardoGo</h1>
       </div>
-      <div class="hero-card">
-        <span>Tarifa mínima</span>
+      <div class="hidden" aria-hidden="true">
         <strong id="tariffMin">R$ 12,00</strong>
         <small id="tariffRulesText">Carregando regras...</small>
       </div>
@@ -41,12 +38,11 @@
 
   <main class="container">
     <section class="auth-shell" id="authShell">
-      <article class="auth-card login-focus" id="loginCard">
-        <p class="section-kicker">Acesso ao sistema</p>
-        <h2>Entrar no PardoGo</h2>
-        <p class="muted">Use seu telefone cadastrado e senha para entrar.</p>
+      <article class="auth-card login-focus minimal-login" id="loginCard">
+        <p class="section-kicker">Acesso</p>
+        <h2>Entrar</h2>
         <form id="loginForm" class="form auth-form" autocomplete="on">
-          <label>Telefone ou usuário
+          <label>Usuário
             <input name="phone" inputmode="tel" autocomplete="username" placeholder="Ex.: 67999990000 ou admin" required>
           </label>
           <label>Senha
@@ -55,14 +51,24 @@
               <button type="button" class="password-toggle" data-toggle-password="loginForm">Mostrar</button>
             </div>
           </label>
-          <button type="submit">Entrar no sistema</button>
+          <button type="submit">Entrar</button>
           <div class="auth-entry-actions">
-            <button type="button" class="secondary" id="openRegisterBtn">Ir para cadastro</button>
+            <button type="button" class="secondary" id="openRegisterBtn">Cadastro</button>
           </div>
-          <button type="button" class="ghost dark" id="googleAuthBtn">Entrar ou cadastrar com Google</button>
-          <small class="muted">Use o mesmo botão para criar conta ou entrar via Google.</small>
-          <div class="quick-area-links" aria-label="Atalhos de acesso">
-            <a class="button-link ghost-area" href="admin.html">Área Admin</a>
+          <div class="login-permissions">
+            <h3>Permissões do aplicativo</h3>
+            <p class="muted">Recomendado no celular: localização, notificações, câmera, microfone e contatos (quando disponível).</p>
+            <div id="mobilePermissionsList" class="checklist">
+              <span>Permissões ainda não verificadas.</span>
+            </div>
+            <div class="location-row">
+              <button type="button" id="checkPermissionsBtn" class="ghost dark">Atualizar permissões</button>
+              <button type="button" id="requestLocationPermissionBtn" class="secondary">Localização</button>
+              <button type="button" id="requestNotificationPermissionBtn" class="ghost dark">Notificações</button>
+              <button type="button" id="requestEssentialPermissionsBtn" class="ghost dark">Câmera/Mic/Contatos</button>
+              <button type="button" id="openAppSettingsBtn" class="ghost dark hidden">Configurações do app</button>
+            </div>
+            <small id="permissionsStatus" class="form-status muted">Toque em “Atualizar permissões” para verificar no dispositivo.</small>
           </div>
           <small id="loginStatus" class="form-status muted" role="status" aria-live="polite">Informe seu telefone e senha para acessar.</small>
         </form>
@@ -71,9 +77,9 @@
 
     <section class="register-shell hidden" id="registerPanel">
       <article class="auth-card register-focus">
-        <p class="section-kicker">Novo cadastro</p>
-        <h2>Criar conta</h2>
-        <p class="muted">Escolha o perfil e preencha os dados. Motorista fica pendente até aprovação no painel admin.</p>
+        <p class="section-kicker">Cadastro</p>
+        <h2>Criar sua conta</h2>
+        <p class="muted">Preencha os dados para acessar o aplicativo. Cadastro de motorista passa por aprovação.</p>
 
         <form id="registerForm" class="form auth-form" autocomplete="on">
           <label>Tipo de conta
@@ -122,10 +128,9 @@
             <span>Autorizo o uso dos dados para cadastro e operação do sistema.</span>
           </label>
           <div class="auth-entry-actions">
-            <button type="submit" class="secondary">Criar cadastro</button>
-            <button type="button" class="ghost dark" id="backToLoginBtn">Voltar para login</button>
+            <button type="submit" class="secondary">Finalizar cadastro</button>
+            <button type="button" class="ghost dark" id="backToLoginBtn">Voltar</button>
           </div>
-          <button type="button" class="ghost dark" id="googleRegisterBtn">Cadastrar com Google</button>
           <small id="registerStatus" class="form-status muted" role="status" aria-live="polite">Depois do cadastro, volte para o login e entre no sistema.</small>
         </form>
       </article>
@@ -443,16 +448,7 @@
           <div class="app-permissions">
             <h3>Permissões do aplicativo</h3>
             <p class="muted">Verifique e solicite permissões para garantir localização e recursos no Android.</p>
-            <div id="mobilePermissionsList" class="checklist">
-              <span>Permissões ainda não verificadas.</span>
-            </div>
-            <div class="location-row">
-              <button type="button" id="checkPermissionsBtn" class="ghost dark">Atualizar permissões</button>
-              <button type="button" id="requestLocationPermissionBtn" class="secondary">Solicitar localização</button>
-              <button type="button" id="requestNotificationPermissionBtn" class="ghost dark">Solicitar notificações</button>
-              <button type="button" id="openAppSettingsBtn" class="ghost dark hidden">Abrir configurações do app</button>
-            </div>
-            <small id="permissionsStatus" class="form-status muted">Toque em “Atualizar permissões” para verificar o status no dispositivo.</small>
+            <p class="muted">As permissões agora aparecem diretamente na primeira tela de login.</p>
           </div>
           <ul>
             <li>Front-end dentro da pasta <code>public</code>.</li>
