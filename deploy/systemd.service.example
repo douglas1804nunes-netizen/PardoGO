@@ -1,0 +1,16 @@
+[Unit]
+Description=PardoGo Transporte Local
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/pardogo
+EnvironmentFile=/var/www/pardogo/.env
+ExecStart=/usr/bin/node --no-warnings server.js
+Restart=always
+RestartSec=5
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target

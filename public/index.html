@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#061827">
+  <title>PardoGo | Transporte local e app Android</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="hero">
+    <nav class="topbar">
+      <div class="brand">
+        <span class="brand-mark">PG</span>
+        <div>
+          <strong>PardoGo</strong>
+          <small>Transporte urbano para cidade pequena</small>
+        </div>
+      </div>
+      <div class="session">
+        <span id="sessionText">Não conectado</span>
+        <span id="realtimeStatus" class="realtime-badge warn">Tempo real offline</span>
+        <button id="logoutBtn" class="ghost hidden">Sair</button>
+      </div>
+    </nav>
+    <section class="hero-content">
+      <div>
+        <p class="eyebrow">Plataforma de mobilidade local</p>
+        <h1>Corridas locais com visual moderno e base pronta para virar aplicativo Android.</h1>
+        <p>Sistema completo para operação web e mobile, com API configurável, mapa, localização em tempo real e gestão administrativa.</p>
+      </div>
+      <div class="hero-card">
+        <span>Tarifa mínima</span>
+        <strong id="tariffMin">R$ 12,00</strong>
+        <small id="tariffRulesText">Carregando regras...</small>
+      </div>
+    </section>
+  </header>
+
+  <main class="container">
+    <section class="auth-shell" id="authShell">
+      <article class="auth-card login-focus" id="loginCard">
+        <p class="section-kicker">Acesso ao sistema</p>
+        <h2>Entrar no PardoGo</h2>
+        <p class="muted">Use seu telefone cadastrado e senha para entrar.</p>
+        <form id="loginForm" class="form auth-form" autocomplete="on">
+          <label>Telefone ou usuário
+            <input name="phone" inputmode="tel" autocomplete="username" placeholder="Ex.: 67999990000 ou admin" required>
+          </label>
+          <label>Senha
+            <div class="password-wrap">
+              <input name="password" type="password" autocomplete="current-password" placeholder="Digite sua senha" required>
+              <button type="button" class="password-toggle" data-toggle-password="loginForm">Mostrar</button>
+            </div>
+          </label>
+          <button type="submit">Entrar no sistema</button>
+          <div class="auth-entry-actions">
+            <button type="button" class="secondary" id="openRegisterBtn">Ir para cadastro</button>
+          </div>
+          <button type="button" class="ghost dark" id="googleAuthBtn">Entrar ou cadastrar com Google</button>
+          <small class="muted">Use o mesmo botão para criar conta ou entrar via Google.</small>
+          <div class="quick-area-links" aria-label="Atalhos de acesso">
+            <a class="button-link ghost-area" href="admin.html">Área Admin</a>
+          </div>
+          <small id="loginStatus" class="form-status muted" role="status" aria-live="polite">Informe seu telefone e senha para acessar.</small>
+        </form>
+      </article>
+    </section>
+
+    <section class="register-shell hidden" id="registerPanel">
+      <article class="auth-card register-focus">
+        <p class="section-kicker">Novo cadastro</p>
+        <h2>Criar conta</h2>
+        <p class="muted">Escolha o perfil e preencha os dados. Motorista fica pendente até aprovação no painel admin.</p>
+
+        <form id="registerForm" class="form auth-form" autocomplete="on">
+          <label>Tipo de conta
+            <select name="role" id="registerRole">
+              <option value="passenger">Passageiro</option>
+              <option value="driver">Motorista</option>
+            </select>
+          </label>
+          <label>Nome completo
+            <input name="name" autocomplete="name" placeholder="Digite seu nome" required>
+          </label>
+          <label>Telefone
+            <input name="phone" inputmode="tel" autocomplete="tel" placeholder="67999990000" required>
+          </label>
+          <label>Senha
+            <div class="password-wrap">
+              <input name="password" type="password" autocomplete="new-password" minlength="6" pattern="(?=.*[A-Z])(?=.*[^A-Za-z0-9]).{6,}" title="Use no mínimo 6 caracteres, com 1 letra maiúscula e 1 caractere especial." placeholder="Ex.: Senha@123" required>
+              <button type="button" class="password-toggle" data-toggle-password="registerForm">Mostrar</button>
+            </div>
+          </label>
+          <div id="driverFields" class="driver-fields hidden">
+            <div class="grid two compact">
+              <label>Veículo
+                <input name="vehicle" placeholder="Ex.: Fiat Mobi prata">
+              </label>
+              <label>Placa
+                <input name="plate" placeholder="ABC1D23">
+              </label>
+              <label>CNH
+                <input name="cnhNumber" placeholder="Número da CNH">
+              </label>
+              <label>Modelo/ano
+                <input name="vehicleModel" placeholder="Ex.: Mobi 2020">
+              </label>
+              <label>Cor do veículo
+                <input name="vehicleColor" placeholder="Ex.: prata">
+              </label>
+            </div>
+          </div>
+          <label class="check-row">
+            <input name="acceptTerms" type="checkbox" required>
+            <span>Li e aceito os termos de uso.</span>
+          </label>
+          <label class="check-row">
+            <input name="acceptPrivacy" type="checkbox" required>
+            <span>Autorizo o uso dos dados para cadastro e operação do sistema.</span>
+          </label>
+          <div class="auth-entry-actions">
+            <button type="submit" class="secondary">Criar cadastro</button>
+            <button type="button" class="ghost dark" id="backToLoginBtn">Voltar para login</button>
+          </div>
+          <button type="button" class="ghost dark" id="googleRegisterBtn">Cadastrar com Google</button>
+          <small id="registerStatus" class="form-status muted" role="status" aria-live="polite">Depois do cadastro, volte para o login e entre no sistema.</small>
+        </form>
+      </article>
+    </section>
+
+    <section class="logged-card hidden" id="loggedCard">
+      <div>
+        <p class="section-kicker">Sessão ativa</p>
+        <h2 id="loggedTitle">Você está conectado</h2>
+        <p id="loggedDescription" class="muted">Use as abas abaixo para operar o sistema.</p>
+      </div>
+      <div class="logged-actions">
+        <button type="button" class="secondary" id="goToAreaBtn">Ir para minha área</button>
+        <button type="button" class="ghost dark" id="logoutInlineBtn">Sair</button>
+      </div>
+    </section>
+
+    <section class="tabs">
+      <button class="tab active" data-target="passengerPanel">Passageiro</button>
+      <button class="tab" data-target="driverPanel">Motorista</button>
+      <button class="tab" data-target="adminPanel">Admin</button>
+      <button class="tab" data-target="securityPanel">Segurança</button>
+      <button class="tab" data-target="legalPanel">Termos</button>
+      <button class="tab" data-target="appPanel">App</button>
+    </section>
+
+    <section id="passengerPanel" class="panel active">
+      <div class="grid two">
+        <article class="card protected" data-role="passenger admin">
+          <h2>Pedir corrida</h2>
+          <form id="rideForm" class="form">
+            <label>Origem
+              <input name="origin" placeholder="Ex.: Centro, mercado, casa" required>
+            </label>
+            <div class="location-row">
+              <button type="button" id="useLocationBtn" class="ghost dark">Usar minha localização</button>
+              <button type="button" id="lookupOriginBtn" class="ghost dark">Buscar origem</button>
+              <small id="locationText" class="muted">Localização ainda não capturada.</small>
+            </div>
+            <input type="hidden" name="originLat">
+            <input type="hidden" name="originLng">
+            <label>Destino
+              <input name="destination" placeholder="Ex.: Hospital, rodoviária, bairro" required>
+            </label>
+            <div class="location-row">
+              <button type="button" id="lookupDestinationBtn" class="ghost dark">Buscar destino no mapa</button>
+              <button type="button" id="calculateRouteBtn" class="ghost dark">Calcular rota real</button>
+              <small id="destinationText" class="muted">Destino ainda sem coordenadas.</small>
+            </div>
+            <input type="hidden" name="destinationLat">
+            <input type="hidden" name="destinationLng">
+            <div class="grid two compact">
+              <label>Distância estimada (km)
+                <input name="distanceKm" type="number" min="0.5" step="0.1" value="2.5">
+              </label>
+              <label>Tempo estimado (min)
+                <input name="minutes" type="number" min="3" step="1" value="10">
+              </label>
+            </div>
+            <label>Pagamento
+              <select name="paymentMethod">
+                <option>Pix</option>
+                <option>Dinheiro</option>
+                <option>Saldo do app</option>
+              </select>
+            </label>
+            <label>Observação
+              <input name="notes" placeholder="Ex.: estou no portão azul">
+            </label>
+            <div class="fare-box">
+              <span>Estimativa</span>
+              <strong id="farePreview">R$ 0,00</strong>
+            </div>
+            <small id="routeModeText" class="muted">Distância manual até calcular rota real.</small>
+            <button type="button" id="estimateBtn" class="ghost dark">Calcular valor</button>
+            <button type="submit">Solicitar corrida</button>
+          </form>
+        </article>
+
+        <article class="card protected" data-role="passenger admin">
+          <h2>Mapa da corrida</h2>
+          <p class="muted">Mapa real com OpenStreetMap. Clique no mapa para marcar origem/destino ou use os botões de busca.</p>
+          <div class="map-shell" id="routeMap"></div>
+          <div class="route-summary" id="routeSummary">Preencha origem, destino e calcule a corrida para visualizar a rota.</div>
+        </article>
+
+        <article class="card protected" data-role="passenger admin">
+          <h2>Saldo no aplicativo</h2>
+          <p class="muted">Recarregue seu saldo com Pix ou Dinheiro e pague corridas usando o crédito do app.</p>
+          <div class="fare-box wallet-box">
+            <span>Saldo disponível</span>
+            <strong id="walletBalance">R$ 0,00</strong>
+          </div>
+          <form id="walletTopupForm" class="form">
+            <div class="grid two compact">
+              <label>Valor da recarga (R$)
+                <input name="amount" type="number" min="1" step="0.01" value="20">
+              </label>
+              <label>Método de recarga
+                <select name="method">
+                  <option>Pix</option>
+                  <option>Dinheiro</option>
+                </select>
+              </label>
+            </div>
+            <button type="submit" class="secondary">Adicionar crédito</button>
+            <small id="walletStatus" class="form-status muted">Seu saldo é atualizado imediatamente após a recarga.</small>
+          </form>
+          <h3>Extrato recente</h3>
+          <div id="walletTransactions" class="list empty">Sem movimentações no momento.</div>
+        </article>
+
+        <article class="card protected wide" data-role="passenger admin">
+          <h2>Minhas corridas</h2>
+          <div id="passengerRides" class="list empty">Entre como passageiro para ver seu histórico.</div>
+        </article>
+      </div>
+    </section>
+
+    <section id="driverPanel" class="panel">
+      <div class="grid two">
+        <article class="card protected" data-role="driver">
+          <h2>Área do motorista</h2>
+          <p class="muted">Fique online para aparecer como disponível no painel e receber corridas.</p>
+          <div class="status-row">
+            <span id="driverStatusBadge" class="badge">Offline</span>
+            <button id="toggleOnlineBtn">Ficar online/offline</button>
+          </div>
+          <div class="location-row spaced">
+            <button type="button" id="driverLocationBtn" class="ghost dark">Atualizar minha posição</button>
+            <small id="driverLocationText" class="muted">Posição do motorista ainda não enviada.</small>
+          </div>
+        </article>
+        <article class="card protected" data-role="driver">
+          <h2>Corridas disponíveis</h2>
+          <div id="driverRides" class="list empty">Entre como motorista aprovado para ver corridas.</div>
+          <h3>Mapa das corridas</h3>
+          <p class="muted">Visualize origem e destino da corrida selecionada junto com sua posição atual.</p>
+          <div class="map-shell" id="driverRouteMap"></div>
+          <div class="route-summary" id="driverRouteSummary">Selecione uma corrida para visualizar no mapa.</div>
+        </article>
+      </div>
+    </section>
+
+    <section id="adminPanel" class="panel">
+      <div class="protected" data-role="admin">
+        <div class="grid four metrics" id="adminMetrics"></div>
+        <div class="grid two">
+          <article class="card">
+            <h2>Regras de tarifa</h2>
+            <form id="tariffForm" class="form">
+              <div class="grid two compact">
+                <label>Bandeirada
+                  <input name="base" type="number" step="0.01">
+                </label>
+                <label>Por km
+                  <input name="perKm" type="number" step="0.01">
+                </label>
+                <label>Por minuto
+                  <input name="perMin" type="number" step="0.01">
+                </label>
+                <label>Tarifa mínima
+                  <input name="min" type="number" step="0.01">
+                </label>
+                <label>Repasse motorista (%)
+                  <input name="driverSharePercent" type="number" min="50" max="95" step="1">
+                </label>
+              </div>
+              <button type="submit">Salvar tarifas</button>
+            </form>
+          </article>
+          <article class="card">
+            <h2>Operação e exportação</h2>
+            <p class="muted">Baixe um JSON com usuários, motoristas, corridas, posições, configurações, sessões e auditoria.</p>
+            <a id="exportLink" class="button-link" href="#">Exportar JSON</a>
+            <div class="admin-map-note">Painel de operação com exportação, checklist do sistema e acompanhamento em tempo real.</div>
+            <div id="systemChecklist" class="production-checklist empty">Checklist de produção ainda não carregado.</div>
+          </article>
+        </div>
+        <div class="grid two">
+          <article class="card">
+            <h2>Motoristas</h2>
+            <div id="driversList" class="list"></div>
+          </article>
+          <article class="card">
+            <h2>Todas as corridas</h2>
+            <div id="adminRides" class="list"></div>
+          </article>
+        </div>
+        <div class="grid two">
+          <article class="card">
+            <h2>Chamados de suporte</h2>
+            <div id="adminSupportList" class="list empty">Nenhum chamado carregado.</div>
+          </article>
+          <article class="card">
+            <h2>Denúncias e segurança</h2>
+            <div id="adminReportsList" class="list empty">Nenhuma denúncia carregada.</div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+
+    <section id="securityPanel" class="panel">
+      <div class="grid two">
+        <article class="card protected" data-role="passenger driver admin">
+          <p class="section-kicker">Suporte</p>
+          <h2>Abrir chamado</h2>
+          <p class="muted">Use para problemas de login, corrida, pagamento, mapa ou atendimento.</p>
+          <form id="supportForm" class="form">
+            <label>Assunto
+              <input name="subject" placeholder="Ex.: problema na corrida" required>
+            </label>
+            <label>Categoria
+              <select name="category" required>
+                <option value="corrida">Corrida</option>
+                <option value="pagamento">Pagamento</option>
+                <option value="cadastro">Cadastro</option>
+                <option value="motorista">Motorista</option>
+                <option value="aplicativo">Aplicativo</option>
+                <option value="outro">Outro</option>
+              </select>
+            </label>
+            <label>Mensagem
+              <textarea name="message" rows="5" placeholder="Descreva o que aconteceu" required></textarea>
+            </label>
+            <button type="submit">Enviar chamado</button>
+          </form>
+          <div id="supportList" class="list empty">Entre no sistema para ver seus chamados.</div>
+        </article>
+
+        <article class="card protected" data-role="passenger driver admin">
+          <p class="section-kicker">Denúncia</p>
+          <h2>Relatar problema de segurança</h2>
+          <p class="muted">Registre comportamento inadequado, risco, desacordo de corrida ou problema grave.</p>
+          <form id="reportForm" class="form">
+            <label>ID da corrida, se souber
+              <input name="rideId" placeholder="Opcional">
+            </label>
+            <label>Quem está sendo relatado?
+              <select name="reportedRole" required>
+                <option value="driver">Motorista</option>
+                <option value="passenger">Passageiro</option>
+                <option value="platform">Plataforma/operação</option>
+              </select>
+            </label>
+            <label>Categoria
+              <select name="category" required>
+                <option value="seguranca">Segurança</option>
+                <option value="comportamento">Comportamento</option>
+                <option value="pagamento">Pagamento</option>
+                <option value="rota">Rota</option>
+                <option value="outro">Outro</option>
+              </select>
+            </label>
+            <label>Descrição
+              <textarea name="description" rows="5" placeholder="Explique com detalhes" required></textarea>
+            </label>
+            <button type="submit" class="secondary">Enviar denúncia</button>
+          </form>
+          <div id="reportsList" class="list empty">Entre no sistema para ver suas denúncias.</div>
+        </article>
+      </div>
+    </section>
+
+    <section id="legalPanel" class="panel">
+      <div class="grid two">
+        <article class="card legal-card">
+          <p class="section-kicker">Termos</p>
+          <h2 id="termsTitle">Termos de uso</h2>
+          <p id="termsSummary" class="muted">Carregando...</p>
+          <ul id="termsList"></ul>
+        </article>
+        <article class="card legal-card">
+          <p class="section-kicker">Privacidade</p>
+          <h2 id="privacyTitle">Política de privacidade</h2>
+          <p id="privacySummary" class="muted">Carregando...</p>
+          <ul id="privacyList"></ul>
+        </article>
+      </div>
+      <article class="card notes">
+        <h2>Aviso operacional</h2>
+        <p>Antes da operação comercial, revise requisitos legais, fiscais e regulatórios aplicáveis ao transporte remunerado privado no município.</p>
+      </article>
+    </section>
+
+    <section id="appPanel" class="panel">
+      <div class="grid two">
+        <article class="card">
+          <h2>Aplicativo Android</h2>
+          <p>O front-end pode ser executado no Android via Capacitor, usando API local ou API online com HTTPS.</p>
+          <form id="apiBaseForm" class="form app-config-form">
+            <label>URL online da API para o app
+              <input id="apiBaseInput" name="apiBaseUrl" placeholder="Ex.: https://api.seudominio.com">
+            </label>
+            <div class="location-row">
+              <button type="submit" class="secondary">Salvar URL da API</button>
+              <button type="button" id="clearApiBaseBtn" class="ghost dark">Usar API local</button>
+            </div>
+            <small id="apiBaseStatus" class="form-status muted">Modo atual: API local/mesmo domínio.</small>
+          </form>
+          <div class="app-permissions">
+            <h3>Permissões do aplicativo</h3>
+            <p class="muted">Verifique e solicite permissões para garantir localização e recursos no Android.</p>
+            <div id="mobilePermissionsList" class="checklist">
+              <span>Permissões ainda não verificadas.</span>
+            </div>
+            <div class="location-row">
+              <button type="button" id="checkPermissionsBtn" class="ghost dark">Atualizar permissões</button>
+              <button type="button" id="requestLocationPermissionBtn" class="secondary">Solicitar localização</button>
+              <button type="button" id="requestNotificationPermissionBtn" class="ghost dark">Solicitar notificações</button>
+              <button type="button" id="openAppSettingsBtn" class="ghost dark hidden">Abrir configurações do app</button>
+            </div>
+            <small id="permissionsStatus" class="form-status muted">Toque em “Atualizar permissões” para verificar o status no dispositivo.</small>
+          </div>
+          <ul>
+            <li>Front-end dentro da pasta <code>public</code>.</li>
+            <li>Banco SQLite em <code>data/pardogo.sqlite</code>.</li>
+            <li>Mapa com Leaflet/OpenStreetMap no navegador.</li>
+            <li>Cálculo de rota via API do backend e fallback por coordenadas.</li>
+            <li>Tempo real com SSE/EventSource para passageiro, motorista e admin.</li>
+            <li>Cancelamento de corrida com motivo e auditoria.</li>
+            <li>Contato entre passageiro e motorista por WhatsApp/ligação.</li>
+            <li>Avaliação da corrida com nota de 1 a 5 e comentário.</li>
+            <li>Média de avaliação do motorista e alertas de qualidade no admin.</li>
+            <li>Suporte, denúncia, termos, privacidade e revisão documental do motorista.</li>
+            <li>Base Android com Capacitor documentada no arquivo <code>APP.md</code>.</li>
+            <li>Configuração de API online por <code>public/mobile-config.js</code> ou pela tela acima.</li>
+            <li>Scripts <code>npm run cap:add:android</code>, <code>npm run cap:sync:android</code> e <code>npm run cap:open:android</code>.</li>
+          </ul>
+        </article>
+        <article class="card">
+          <h2>Status da operação mobile</h2>
+          <p class="muted">Checklist de funcionalidades disponíveis no app e no navegador.</p>
+          <div class="checklist">
+            <span>✓ SSE/EventSource</span>
+            <span>✓ Nova corrida em tempo real</span>
+            <span>✓ Status aceito/finalizado ao vivo</span>
+            <span>✓ Painel admin atualizando</span>
+            <span>✓ Cancelamento com motivo</span>
+            <span>✓ WhatsApp e ligação</span>
+            <span>✓ Avaliação 1 a 5 estrelas</span>
+            <span>✓ Média por motorista</span>
+            <span>✓ Indicadores de qualidade</span>
+            <span>✓ Login corrigido</span>
+            <span>✓ Cadastro guiado por perfil</span>
+            <span>✓ Paleta azul/ciano</span>
+            <span>✓ Dark mode urbano</span>
+            <span>✓ Termos e privacidade</span>
+            <span>✓ Suporte e denúncias</span>
+            <span>✓ Documentos do motorista</span>
+            <span>✓ Configuração Android/Capacitor</span>
+            <span>✓ API online configurável</span>
+            <span>✓ CORS para app mobile</span>
+          </div>
+        </article>
+      </div>
+    </section>
+
+
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="mobile-config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
