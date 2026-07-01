@@ -44,7 +44,8 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX || 300);
 const rateLimitBuckets = new Map();
-const MAP_DEFAULT_CENTER = { lat: -21.302, lng: -52.833, label: 'Santa Rita do Pardo - MS' };
+const MAP_DEFAULT_CENTER = { lat: -21.302, lng: -52.833, label: 'Santa Rita do Rio Pardo - MS' };
+const CITY_GEOFENCE_RADIUS_KM = Number(process.env.CITY_GEOFENCE_RADIUS_KM || 55);
 const CITY_AVERAGE_SPEED_KMH = Number(process.env.CITY_AVERAGE_SPEED_KMH || 28);
 const MAP_TIMEOUT_MS = Number(process.env.MAP_TIMEOUT_MS || 5500);
 const eventClients = new Map();
@@ -57,7 +58,7 @@ const defaultTariffRules = {
   perMin: 0.45,
   min: 12,
   driverSharePercent: 80,
-  city: 'Santa Rita do Pardo - MS'
+  city: 'Santa Rita do Rio Pardo - MS'
 };
 
 let db;
@@ -1233,6 +1234,41 @@ function haversineDistanceKm(origin, destination) {
   return Number((R * c).toFixed(2));
 }
 
+function isWithinAllowedCity(lat, lng) {
+  if (!isValidLatLng(lat, lng)) return false;
+  const distance = haversineDistanceKm(
+    { lat: Number(lat), lng: Number(lng) },
+    { lat: MAP_DEFAULT_CENTER.lat, lng: MAP_DEFAULT_CENTER.lng }
+  );
+  return distance <= CITY_GEOFENCE_RADIUS_KM;
+}
+
+function assertCoordsWithinAllowedCity(origin, destination) {
+  if (!origin || !destination) return;
+  if (!isWithinAllowedCity(origin.lat, origin.lng) || !isWithinAllowedCity(destination.lat, destination.lng)) {
+    const error = new Error('Atendimento restrito a Santa Rita do Rio Pardo - MS. Ajuste origem e destino dentro da cidade.');
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
+function isSantaRitaAddress(item) {
+  const address = item && typeof item === 'object' ? (item.address || {}) : {};
+  const cityParts = [
+    address.city,
+    address.town,
+    address.village,
+    address.municipality,
+    address.county,
+    address.state_district
+  ].filter(Boolean).map(value => String(value).toLowerCase());
+
+  const display = String(item?.display_name || '').toLowerCase();
+  const cityMatch = cityParts.some(part => part.includes('santa rita do pardo') || part.includes('santa rita do rio pardo'));
+  const displayMatch = display.includes('santa rita do pardo') || display.includes('santa rita do rio pardo');
+  return cityMatch || displayMatch;
+}
+
 function estimateMinutesByDistance(distanceKm) {
   const safeDistance = Math.max(Number(distanceKm || 0), 0.1);
   const minutes = Math.ceil((safeDistance / CITY_AVERAGE_SPEED_KMH) * 60);
@@ -1260,20 +1296,23 @@ async function fetchJsonWithTimeout(url, timeoutMs = MAP_TIMEOUT_MS) {
 async function geocodeAddress(query) {
   const term = String(query || '').trim();
   if (!term) return [];
-  const expanded = /santa rita/i.test(term) ? term : `${term}, Santa Rita do Pardo, Mato Grosso do Sul, Brasil`;
+  const expanded = /santa rita/i.test(term) ? term : `${term}, Santa Rita do Rio Pardo, Mato Grosso do Sul, Brasil`;
   const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&addressdetails=1&countrycodes=br&q=${encodeURIComponent(expanded)}`;
   const results = await fetchJsonWithTimeout(url).catch(() => []);
-  return results.map(item => ({
-    label: item.display_name,
-    lat: roundCoord(item.lat),
-    lng: roundCoord(item.lon),
-    bbox: item.boundingbox || null,
-    source: 'nominatim'
-  }));
+  return results
+    .filter(item => isSantaRitaAddress(item) && isWithinAllowedCity(item.lat, item.lon))
+    .map(item => ({
+      label: item.display_name,
+      lat: roundCoord(item.lat),
+      lng: roundCoord(item.lon),
+      bbox: item.boundingbox || null,
+      source: 'nominatim'
+    }));
 }
 
 async function reverseGeocodeCoords(lat, lng) {
   if (!isValidLatLng(lat, lng)) return null;
+  if (!isWithinAllowedCity(lat, lng)) return null;
   const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1`;
   const data = await fetchJsonWithTimeout(url).catch(() => null);
   if (!data) return null;
@@ -1286,6 +1325,7 @@ async function reverseGeocodeCoords(lat, lng) {
 }
 
 async function calculateRoute(origin, destination) {
+  assertCoordsWithinAllowedCity(origin, destination);
   const straightLineKm = haversineDistanceKm(origin, destination);
   if (!isValidLatLng(origin?.lat, origin?.lng) || !isValidLatLng(destination?.lat, destination?.lng)) {
     return {
@@ -1840,6 +1880,9 @@ async function handleApi(req, res, url) {
       const q = url.searchParams.get('q') || '';
       if (!q.trim()) return send(res, 400, { ok: false, error: 'Informe o endereço para buscar.' });
       const results = await geocodeAddress(q);
+      if (!results.length) {
+        return send(res, 400, { ok: false, error: 'Endereco fora de Santa Rita do Rio Pardo - MS. Busque um ponto dentro da cidade.' });
+      }
       return send(res, 200, { ok: true, query: q, results, fallbackCenter: MAP_DEFAULT_CENTER });
     }
 
@@ -1849,17 +1892,12 @@ async function handleApi(req, res, url) {
       if (!isValidLatLng(lat, lng)) {
         return send(res, 400, { ok: false, error: 'Latitude/longitude inválidas.' });
       }
+      if (!isWithinAllowedCity(lat, lng)) {
+        return send(res, 400, { ok: false, error: 'Atendimento restrito a Santa Rita do Rio Pardo - MS.' });
+      }
       const result = await reverseGeocodeCoords(lat, lng);
       if (!result) {
-        return send(res, 200, {
-          ok: true,
-          result: {
-            label: `Ponto ${roundCoord(lat)}, ${roundCoord(lng)}`,
-            lat: roundCoord(lat),
-            lng: roundCoord(lng),
-            source: 'fallback-coords'
-          }
-        });
+        return send(res, 400, { ok: false, error: 'Nao foi possivel validar este ponto dentro de Santa Rita do Rio Pardo - MS.' });
       }
       return send(res, 200, { ok: true, result });
     }
@@ -1868,6 +1906,7 @@ async function handleApi(req, res, url) {
       const body = await parseBody(req);
       const { origin, destination } = coordsFromBody(body);
       if (!origin || !destination) return send(res, 400, { ok: false, error: 'Origem e destino precisam ter latitude e longitude.' });
+      assertCoordsWithinAllowedCity(origin, destination);
       const route = await calculateRoute(origin, destination);
       return send(res, 200, { ok: true, ...route });
     }
@@ -1879,6 +1918,7 @@ async function handleApi(req, res, url) {
       let distanceKm = Number(body.distanceKm || 0);
       let minutes = Number(body.minutes || 0);
       if (origin && destination && body.useRoute !== false) {
+        assertCoordsWithinAllowedCity(origin, destination);
         route = await calculateRoute(origin, destination);
         distanceKm = route.distanceKm;
         minutes = route.minutes;
@@ -1914,6 +1954,7 @@ async function handleApi(req, res, url) {
       let distanceKm = Math.max(Number(body.distanceKm || 2), 0.5);
       let minutes = Math.max(Number(body.minutes || Math.ceil(distanceKm * 4)), 3);
       if (originCoords && destinationCoords && body.useRoute !== false) {
+        assertCoordsWithinAllowedCity(originCoords, destinationCoords);
         route = await calculateRoute(originCoords, destinationCoords);
         distanceKm = Math.max(Number(route.distanceKm || distanceKm), 0.5);
         minutes = Math.max(Number(route.minutes || minutes), 3);
@@ -2309,7 +2350,8 @@ async function handleApi(req, res, url) {
 
     return send(res, 404, { ok: false, error: 'Rota não encontrada.' });
   } catch (error) {
-    return send(res, 500, { ok: false, error: error.message || 'Erro interno.' });
+    const statusCode = Number(error?.statusCode) || 500;
+    return send(res, statusCode, { ok: false, error: error.message || 'Erro interno.' });
   }
 }
 

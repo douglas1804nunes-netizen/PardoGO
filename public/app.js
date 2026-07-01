@@ -34,7 +34,7 @@ const state = {
   driverRouteLayer: null,
   driverRides: [],
   selectedDriverRideId: null,
-  defaultCenter: { lat: -21.302, lng: -52.833, label: 'Santa Rita do Pardo - MS' },
+  defaultCenter: { lat: -21.302, lng: -52.833, label: 'Santa Rita do Rio Pardo - MS' },
   eventSource: null,
   realtimeConnected: false,
   realtimeLastEventAt: null,
@@ -55,6 +55,8 @@ const coordFmt = value => Number(value).toFixed(5).replace('.', ',');
 const hasGeo = () => 'geolocation' in navigator;
 const hasLeaflet = () => Boolean(window.L && typeof window.L.map === 'function');
 const LOGIN_DEFAULT_STATUS = 'Informe seu telefone e senha para acessar.';
+const MOBILE_APP_CONFIG = window.PARDOGO_MOBILE_CONFIG || {};
+const ADMIN_MONITOR_TAB_TARGETS = ['adminPanel', 'securityPanel', 'passengerPanel', 'driverPanel', 'legalPanel', 'appPanel'];
 const MAIN_TAB_TARGETS = ['passengerPanel', 'driverPanel'];
 
 function debounce(fn, delay = 350) {
@@ -88,8 +90,14 @@ function currentIntentArea() {
 }
 
 function visibleTabTargetsForCurrentUser() {
+  if (MOBILE_APP_CONFIG.adminOnlyApk) {
+    if (!state.user) return [];
+    if (state.user.role === 'admin') return [...ADMIN_MONITOR_TAB_TARGETS];
+    return [];
+  }
   if (!state.user) return [...MAIN_TAB_TARGETS];
   if (state.user.role === 'driver') return ['driverPanel'];
+  if (state.user.role === 'admin') return ['adminPanel', 'securityPanel'];
   return ['passengerPanel'];
 }
 
@@ -108,6 +116,7 @@ function canOpenArea(areaId) {
 function targetAreaForCurrentUser() {
   const requested = currentIntentArea();
   if (requested && canOpenArea(requested)) return requested;
+  if (MOBILE_APP_CONFIG.adminOnlyApk && state.user?.role === 'admin') return 'adminPanel';
   return areaForRole(state.user?.role);
 }
 
@@ -314,6 +323,7 @@ function roleLabel(role) {
 
 
 function areaForRole(role) {
+  if (role === 'admin') return 'adminPanel';
   return role === 'driver' ? 'driverPanel' : 'passengerPanel';
 }
 
@@ -678,6 +688,11 @@ function renderSession() {
     setFormStatus('#loginStatus', LOGIN_DEFAULT_STATUS, '');
     renderWalletBalance();
   }
+  if (MOBILE_APP_CONFIG.adminOnlyApk && state.user && state.user.role !== 'admin') {
+    toast('Este APK e exclusivo do administrador.', 'error');
+    doLogout('Acesso permitido somente para administrador.').catch(() => {});
+    return;
+  }
   updateMainTabsVisibility();
   protectPanels();
   refreshActiveArea();
@@ -755,7 +770,7 @@ function initMap() {
 
   state.markers.center = L.marker([state.defaultCenter.lat, state.defaultCenter.lng])
     .addTo(state.map)
-    .bindPopup(state.defaultCenter.label || 'Santa Rita do Pardo - MS');
+    .bindPopup(state.defaultCenter.label || 'Santa Rita do Rio Pardo - MS');
 
   state.map.on('click', event => {
     const form = $('#rideForm');
@@ -1539,6 +1554,12 @@ function wireEvents() {
   renderApiBaseStatus();
   wireAddressAutocomplete();
 
+  if (MOBILE_APP_CONFIG.adminOnlyApk) {
+    $('#openRegisterBtn')?.classList.add('hidden');
+    $('#registerPanel')?.classList.add('hidden');
+    setFormStatus('#loginStatus', 'APK exclusivo do administrador. Use o login admin.', 'warn');
+  }
+
   wirePhoneInput('#loginForm input[name="phone"]', true);
   wirePhoneInput('#registerForm input[name="phone"]', false);
 
@@ -1621,6 +1642,9 @@ function wireEvents() {
       const data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify(body) });
       if (!isValidUserPayload(data.user)) {
         throw new Error('Não foi possível concluir o login. Confira a URL da API na aba App.');
+      }
+      if (MOBILE_APP_CONFIG.adminOnlyApk && data.user.role !== 'admin') {
+        throw new Error('Este APK e exclusivo para administrador.');
       }
       saveSession(data.token, data.user);
       setFormStatus('#loginStatus', data.message || `Login realizado. Perfil: ${roleLabel(data.user.role)}.`, 'ok');
