@@ -6,7 +6,7 @@ COPY package.json ./
 COPY server.js ./
 COPY public ./public
 COPY scripts ./scripts
-COPY data/.gitkeep ./data/.gitkeep
+RUN mkdir -p ./data
 COPY README.md PROJETO.md APP.md DEPLOY.md ./
 EXPOSE 5173
 CMD ["node", "--no-warnings", "server.js"]
