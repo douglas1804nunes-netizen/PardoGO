@@ -1,7 +1,4 @@
 function initialApiBaseUrl() {
-  const saved = localStorage.getItem('pardogo_api_base');
-  if (saved) return saved;
-
   const cfg = window.PARDOGO_MOBILE_CONFIG || {};
   const profiles = cfg.profiles && typeof cfg.profiles === 'object' ? cfg.profiles : null;
   const useProfile = Boolean(cfg.autoSelectProfile && profiles);
@@ -12,7 +9,13 @@ function initialApiBaseUrl() {
     if (profileUrl) return profileUrl;
   }
 
-  return String(cfg.apiBaseUrl || '').trim();
+  const configured = String(cfg.apiBaseUrl || '').trim();
+  if (configured) return configured;
+
+  const saved = localStorage.getItem('pardogo_api_base');
+  if (saved) return saved;
+
+  return '';
 }
 
 const state = {
