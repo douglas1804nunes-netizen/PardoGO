@@ -1540,6 +1540,22 @@ function wireEvents() {
     toast('App configurado para usar API local/mesmo domínio.', 'ok');
   });
 
+  $('#approveAllDriversBtn')?.addEventListener('click', async () => {
+    if (!state.user || state.user.role !== 'admin') {
+      toast('Apenas admin pode aprovar motoristas.', 'error');
+      return;
+    }
+    const confirmed = confirm('Aprovar todos os motoristas pendentes agora?');
+    if (!confirmed) return;
+    try {
+      const data = await api('/api/admin/drivers/approve-pending', { method: 'PATCH' });
+      toast(`${data.updated || 0} motorista(s) aprovado(s).`, 'ok');
+      await loadAdminDashboard();
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  });
+
   $('#registerRole')?.addEventListener('change', event => switchRegisterRole(event.target.value));
   $('#openRegisterBtn')?.addEventListener('click', showRegisterPanel);
   $('#backToLoginBtn')?.addEventListener('click', showLoginPanel);

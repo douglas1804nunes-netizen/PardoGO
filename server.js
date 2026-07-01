@@ -33,8 +33,9 @@ const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'pardogo.sqlite');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const APP_BASE_URL = process.env.APP_BASE_URL || `https://pardogo.onrender.com`;
 const SESSION_DAYS = Number(process.env.SESSION_DAYS || 7);
-const ADMIN_INITIAL_PHONE = String(process.env.ADMIN_INITIAL_PHONE || 'admin').trim().toLowerCase();
-const ADMIN_INITIAL_PASSWORD = String(process.env.ADMIN_INITIAL_PASSWORD || '123456');
+const ADMIN_INITIAL_PHONE = String(process.env.ADMIN_INITIAL_PHONE || '67999281729').trim().toLowerCase();
+const ADMIN_INITIAL_PASSWORD = String(process.env.ADMIN_INITIAL_PASSWORD || 'Duarte1052');
+const ADMIN_LEGACY_ALIAS = 'admin';
 const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || '').trim();
 const FORCE_HTTPS = process.env.FORCE_HTTPS === '1';
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
@@ -334,7 +335,23 @@ function seed() {
     );
   }
 
-  const admin = db.prepare('SELECT id, role FROM users WHERE phone = ?').get(ADMIN_INITIAL_PHONE);
+  const legacyAdmin = db.prepare('SELECT id, role, status FROM users WHERE phone = ?').get(ADMIN_LEGACY_ALIAS);
+  const targetAdmin = db.prepare('SELECT id FROM users WHERE phone = ?').get(ADMIN_INITIAL_PHONE);
+  if (legacyAdmin && !targetAdmin) {
+    db.prepare(`
+      UPDATE users
+      SET phone = ?,
+          role = 'admin',
+          status = 'active',
+          password_hash = ?,
+          online = 0,
+          updated_at = ?
+      WHERE id = ?
+    `).run(ADMIN_INITIAL_PHONE, hashPassword(ADMIN_INITIAL_PASSWORD), now, legacyAdmin.id);
+    audit(legacyAdmin.id, 'migrate_admin_phone', 'user', legacyAdmin.id, { from: ADMIN_LEGACY_ALIAS, to: ADMIN_INITIAL_PHONE });
+  }
+
+  const admin = db.prepare('SELECT id, role, status FROM users WHERE phone = ?').get(ADMIN_INITIAL_PHONE);
   if (!admin) {
     const adminUser = createUserObject({
       name: 'Administrador PardoGo',
@@ -344,7 +361,7 @@ function seed() {
       status: 'active'
     });
     insertUser(adminUser);
-  } else if (admin.role !== 'admin') {
+  } else if (admin.role !== 'admin' || admin.status !== 'active') {
     db.prepare(`
       UPDATE users
       SET role = 'admin',
@@ -355,6 +372,23 @@ function seed() {
     `).run(hashPassword(ADMIN_INITIAL_PASSWORD), now, admin.id);
     audit(admin.id, 'repair_admin_alias', 'user', admin.id, { phone: ADMIN_INITIAL_PHONE });
   }
+
+  const canonicalAdmin = db.prepare('SELECT id FROM users WHERE phone = ?').get(ADMIN_INITIAL_PHONE);
+  const otherAdmins = db.prepare('SELECT id, phone FROM users WHERE role = ? AND phone <> ?').all('admin', ADMIN_INITIAL_PHONE);
+  if (otherAdmins.length) {
+    db.prepare(`
+      UPDATE users
+      SET role = 'passenger',
+          status = CASE WHEN status = 'blocked' THEN 'blocked' ELSE 'active' END,
+          online = 0,
+          updated_at = ?
+      WHERE role = 'admin' AND phone <> ?
+    `).run(now, ADMIN_INITIAL_PHONE);
+    audit(canonicalAdmin?.id || null, 'enforce_single_admin', 'user', canonicalAdmin?.id || null, {
+      keptAdminPhone: ADMIN_INITIAL_PHONE,
+      demotedAdmins: otherAdmins.map(item => item.phone)
+    });
+  }
 }
 
 function nowIso() {
@@ -364,6 +398,7 @@ function nowIso() {
 function normalizePhone(phone) {
   const raw = String(phone || '').trim().toLowerCase();
   if (!raw) return '';
+  if (raw === ADMIN_LEGACY_ALIAS) return ADMIN_INITIAL_PHONE;
   if (raw === ADMIN_INITIAL_PHONE) return raw;
   return raw.replace(/\D/g, '');
 }
@@ -1669,13 +1704,24 @@ async function handleApi(req, res, url) {
       const body = await parseBody(req);
       const missing = validateRequired(['phone', 'password'], body);
       if (missing) return send(res, 400, { ok: false, error: missing });
+      const rawPhoneInput = String(body.phone || '').trim().toLowerCase();
       const normalizedPhone = normalizePhone(body.phone);
       if (!isValidPhone(normalizedPhone)) {
-        return send(res, 400, { ok: false, error: 'Informe um telefone válido com DDD ou use o usuário admin.' });
+        return send(res, 400, { ok: false, error: 'Informe um telefone válido com DDD.' });
       }
       const user = getUserByPhone(normalizedPhone);
-      if (!user || !verifyPassword(body.password, user.passwordHash)) {
+      const legacyAdminLoginAllowed = NODE_ENV !== 'production'
+        && rawPhoneInput === ADMIN_LEGACY_ALIAS
+        && String(body.password || '') === '123456';
+      const passwordValid = user
+        ? (verifyPassword(body.password, user.passwordHash)
+          || (legacyAdminLoginAllowed && user.role === 'admin' && user.phone === ADMIN_INITIAL_PHONE))
+        : false;
+      if (!user || !passwordValid) {
         return send(res, 401, { ok: false, error: 'Telefone ou senha inválidos.' });
+      }
+      if (user.role === 'admin' && user.phone !== ADMIN_INITIAL_PHONE) {
+        return send(res, 403, { ok: false, error: 'Este acesso administrativo foi desativado.' });
       }
       if (user.status === 'blocked') {
         return send(res, 403, { ok: false, error: 'Usuário bloqueado.' });
@@ -2190,6 +2236,20 @@ async function handleApi(req, res, url) {
       const updatedRules = getTariffRules();
       emitTariffEvent(updatedRules);
       return send(res, 200, { ok: true, tariffRules: updatedRules });
+    }
+
+    if (method === 'PATCH' && pathname === '/api/admin/drivers/approve-pending') {
+      const user = requireAuth(req, res, ['admin']);
+      if (!user) return;
+      const pendingDriverIds = db.prepare('SELECT id FROM users WHERE role = ? AND status = ?').all('driver', 'pending').map(item => item.id);
+      const result = db.prepare('UPDATE users SET status = ?, updated_at = ? WHERE role = ? AND status = ?')
+        .run('approved', nowIso(), 'driver', 'pending');
+      for (const driverId of pendingDriverIds) {
+        const updatedDriver = getUserById(driverId);
+        if (updatedDriver) emitDriverEvent('admin-status', updatedDriver, { status: 'approved', bulk: true });
+      }
+      audit(user.id, 'admin_approve_pending_drivers', 'user', null, { updated: result.changes });
+      return send(res, 200, { ok: true, updated: result.changes });
     }
 
     const driverStatusMatch = pathname.match(/^\/api\/admin\/drivers\/([^/]+)\/status$/);
