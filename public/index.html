@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#061827">
   <title>PardoGo | Transporte local e app Android</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="styles.css">
@@ -26,12 +29,28 @@
       </div>
     </nav>
     <section class="hero-content compact-hero">
-      <div class="compact-hero-title">
+      <div class="compact-hero-title brand-lockup">
         <h1>PardoGo</h1>
+        <p class="brand-subtitle">Solicite corridas em segundos com uma experiência direta, elegante e preparada para escalar.</p>
       </div>
-      <div class="hidden" aria-hidden="true">
-        <strong id="tariffMin">R$ 12,00</strong>
-        <small id="tariffRulesText">Carregando regras...</small>
+      <div class="hero-visual" aria-hidden="true">
+        <div class="hero-visual-card">
+          <strong>Viagem urbana com precisão</strong>
+          <small>Design limpo para passageiro e motorista com foco na corrida, rota e status em tempo real.</small>
+          <div class="hero-visual-photo-wrap">
+            <img class="hero-visual-photo" src="https://images.pexels.com/photos/170811/pexels-photo-170811.jpeg?auto=compress&cs=tinysrgb&w=1200" alt="Carro em avenida urbana durante o pôr do sol" loading="lazy" decoding="async">
+          </div>
+          <div class="hero-visual-meta">
+            <div>
+              <strong id="tariffMin">R$ 12,00</strong>
+              <small>Tarifa mínima</small>
+            </div>
+            <div>
+              <strong id="tariffRulesText">Carregando regras...</strong>
+              <small>Regras em tempo real</small>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   </header>
@@ -55,28 +74,13 @@
           <div class="auth-entry-actions">
             <button type="button" class="secondary" id="openRegisterBtn">Cadastro</button>
           </div>
-          <div class="login-permissions">
-            <h3>Permissões do aplicativo</h3>
-            <p class="muted">Recomendado no celular: localização, notificações, câmera, microfone e contatos (quando disponível).</p>
-            <div id="mobilePermissionsList" class="checklist">
-              <span>Permissões ainda não verificadas.</span>
-            </div>
-            <div class="location-row">
-              <button type="button" id="checkPermissionsBtn" class="ghost dark">Atualizar permissões</button>
-              <button type="button" id="requestLocationPermissionBtn" class="secondary">Localização</button>
-              <button type="button" id="requestNotificationPermissionBtn" class="ghost dark">Notificações</button>
-              <button type="button" id="requestEssentialPermissionsBtn" class="ghost dark">Câmera/Mic/Contatos</button>
-              <button type="button" id="openAppSettingsBtn" class="ghost dark hidden">Configurações do app</button>
-            </div>
-            <small id="permissionsStatus" class="form-status muted">Toque em “Atualizar permissões” para verificar no dispositivo.</small>
-          </div>
           <small id="loginStatus" class="form-status muted" role="status" aria-live="polite">Informe seu telefone e senha para acessar.</small>
         </form>
       </article>
     </section>
 
     <section class="register-shell hidden" id="registerPanel">
-      <article class="auth-card register-focus">
+      <article class="auth-card register-focus minimal-register">
         <p class="section-kicker">Cadastro</p>
         <h2>Criar sua conta</h2>
         <p class="muted">Preencha os dados para acessar o aplicativo. Cadastro de motorista passa por aprovação.</p>

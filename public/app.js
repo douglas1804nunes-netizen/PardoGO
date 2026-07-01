@@ -339,53 +339,15 @@ async function contactPermissionState() {
   return 'disponivel-no-dispositivo';
 }
 
-function renderPermissionsList(items = []) {
-  const box = $('#mobilePermissionsList');
-  if (!box) return;
-  if (!items.length) {
-    box.innerHTML = '<span>Nenhuma permissão detectada neste dispositivo.</span>';
-    return;
-  }
-  box.innerHTML = items.map(item => `<span class="permission-chip ${permissionTone(item.state)}">${item.label}: ${item.state}</span>`).join('');
-}
-
-function toggleAppSettingsButton(visible) {
-  const btn = $('#openAppSettingsBtn');
-  if (!btn) return;
-  btn.classList.toggle('hidden', !visible);
-}
-
-async function openAppSettings() {
-  try {
-    const appPlugin = window.Capacitor?.Plugins?.App;
-    if (appPlugin?.openSettings) {
-      await appPlugin.openSettings();
-      return;
-    }
-    throw new Error('Configurações do app não disponíveis neste dispositivo.');
-  } catch (error) {
-    setFormStatus('#permissionsStatus', 'Não foi possível abrir automaticamente. Vá em Configurações > Apps > PardoGo > Permissões.', 'error');
-    toast(error.message || 'Abra as configurações do app manualmente para liberar permissões.', 'error');
-  }
-}
-
 async function updateMobilePermissionsStatus() {
-  const locationState = await queryPermissionState('geolocation');
+  const note = $('#firstAccessNote');
+  if (!note) return;
   const notificationState = 'Notification' in window ? (Notification.permission || 'default') : 'indisponivel';
-  const cameraState = await queryPermissionState('camera');
-  const microphoneState = await queryPermissionState('microphone');
-  const contactsState = await contactPermissionState();
-  const items = [
-    { label: 'Localização', state: locationState },
-    { label: 'Notificações', state: notificationState },
-    { label: 'Câmera', state: cameraState },
-    { label: 'Microfone', state: microphoneState },
-    { label: 'Contatos', state: contactsState }
+  const noteParts = [
+    'No primeiro acesso, o app pode pedir permissão de localização, notificações e câmera/microfone quando uma função exigir.',
+    notificationState === 'granted' ? 'Notificações já estão ativas.' : 'Notificações ainda não foram liberadas.'
   ];
-  renderPermissionsList(items);
-  const shouldShowSettings = [locationState, notificationState, cameraState, microphoneState, contactsState].includes('denied');
-  toggleAppSettingsButton(shouldShowSettings);
-  setFormStatus('#permissionsStatus', 'Status de permissões atualizado.', 'ok');
+  note.textContent = noteParts.join(' ');
 }
 
 async function requestEssentialPermissions() {
@@ -414,44 +376,36 @@ async function requestEssentialPermissions() {
   }
 
   await updateMobilePermissionsStatus();
-  setFormStatus('#permissionsStatus', `Permissões essenciais: ${messages.join(' • ')}.`, 'ok');
+  toast(`Permissões essenciais: ${messages.join(' • ')}.`, 'ok');
 }
 
 async function requestLocationPermission() {
   if (!hasGeo()) {
-    setFormStatus('#permissionsStatus', 'Geolocalização não está disponível neste dispositivo.', 'error');
+    toast('Geolocalização não está disponível neste dispositivo.', 'error');
     return;
   }
   try {
     await getBrowserPosition();
-    await updateMobilePermissionsStatus();
-    setFormStatus('#permissionsStatus', 'Permissão de localização concedida.', 'ok');
     toast('Permissão de localização concedida.', 'ok');
   } catch {
-    toggleAppSettingsButton(true);
-    setFormStatus('#permissionsStatus', 'Permissão de localização negada ou indisponível.', 'error');
     toast('Permissão de localização negada ou indisponível.', 'error');
   }
 }
 
 async function requestNotificationPermission() {
   if (!('Notification' in window)) {
-    setFormStatus('#permissionsStatus', 'Notificações não são suportadas neste dispositivo.', 'error');
+    toast('Notificações não são suportadas neste dispositivo.', 'error');
     return;
   }
   try {
     const result = await Notification.requestPermission();
-    await updateMobilePermissionsStatus();
     if (result === 'granted') {
-      setFormStatus('#permissionsStatus', 'Permissão de notificações concedida.', 'ok');
       toast('Permissão de notificações concedida.', 'ok');
       return;
     }
-    if (result === 'denied') toggleAppSettingsButton(true);
-    setFormStatus('#permissionsStatus', 'Permissão de notificações não foi concedida.', 'error');
     toast('Permissão de notificações não foi concedida.', 'error');
   } catch {
-    setFormStatus('#permissionsStatus', 'Não foi possível solicitar notificações neste momento.', 'error');
+    toast('Não foi possível solicitar notificações neste momento.', 'error');
   }
 }
 
@@ -1585,16 +1539,6 @@ function wireEvents() {
     setApiBaseUrl('');
     toast('App configurado para usar API local/mesmo domínio.', 'ok');
   });
-
-  $('#checkPermissionsBtn')?.addEventListener('click', () => {
-    updateMobilePermissionsStatus().catch(() => {
-      setFormStatus('#permissionsStatus', 'Falha ao verificar permissões.', 'error');
-    });
-  });
-  $('#requestLocationPermissionBtn')?.addEventListener('click', requestLocationPermission);
-  $('#requestNotificationPermissionBtn')?.addEventListener('click', requestNotificationPermission);
-  $('#requestEssentialPermissionsBtn')?.addEventListener('click', requestEssentialPermissions);
-  $('#openAppSettingsBtn')?.addEventListener('click', openAppSettings);
 
   $('#registerRole')?.addEventListener('change', event => switchRegisterRole(event.target.value));
   $('#openRegisterBtn')?.addEventListener('click', showRegisterPanel);
