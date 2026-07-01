@@ -36,7 +36,12 @@ const state = {
   realtimeConnected: false,
   realtimeLastEventAt: null,
   apiBaseUrl: initialApiBaseUrl(),
-  googleAuthReady: false
+  googleAuthReady: false,
+  addressSuggestions: {
+    origin: [],
+    destination: []
+  },
+  routeAutoTimer: null
 };
 
 const $ = selector => document.querySelector(selector);
@@ -47,6 +52,14 @@ const coordFmt = value => Number(value).toFixed(5).replace('.', ',');
 const hasGeo = () => 'geolocation' in navigator;
 const hasLeaflet = () => Boolean(window.L && typeof window.L.map === 'function');
 const LOGIN_DEFAULT_STATUS = 'Informe seu telefone e senha para acessar.';
+
+function debounce(fn, delay = 350) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), delay);
+  };
+}
 
 function isStrongPassword(value) {
   const text = String(value || '');
@@ -891,6 +904,7 @@ async function setPointFromMap(type, lat, lng) {
     form.elements.destination.value = label;
     toast('Destino marcado no mapa.', 'ok');
   }
+  scheduleAutoEstimate();
 }
 
 async function resolveRideFieldByGeocode(type) {
@@ -911,6 +925,61 @@ async function resolveRideFieldByGeocode(type) {
   return place;
 }
 
+function updateSuggestionList(type, results = []) {
+  const datalist = type === 'origin' ? $('#originSuggestions') : $('#destinationSuggestions');
+  if (!datalist) return;
+  datalist.innerHTML = '';
+  for (const item of results.slice(0, 6)) {
+    const option = document.createElement('option');
+    option.value = item.label;
+    datalist.appendChild(option);
+  }
+}
+
+const requestAddressSuggestions = debounce(async (type, query) => {
+  const text = String(query || '').trim();
+  if (text.length < 3) {
+    state.addressSuggestions[type] = [];
+    updateSuggestionList(type, []);
+    return;
+  }
+  try {
+    const data = await api(`/api/maps/geocode?q=${encodeURIComponent(text)}`);
+    state.addressSuggestions[type] = Array.isArray(data.results) ? data.results : [];
+    updateSuggestionList(type, state.addressSuggestions[type]);
+  } catch {
+    state.addressSuggestions[type] = [];
+    updateSuggestionList(type, []);
+  }
+}, 320);
+
+function applyKnownSuggestion(type) {
+  const form = $('#rideForm');
+  if (!form) return false;
+  const field = type === 'origin' ? form.elements.origin : form.elements.destination;
+  const value = String(field.value || '').trim();
+  if (!value) return false;
+  const hit = (state.addressSuggestions[type] || []).find(item => String(item.label || '').trim() === value);
+  if (!hit) return false;
+  if (type === 'origin') setOriginCoords(hit.lat, hit.lng, hit.label || value);
+  if (type === 'destination') setDestinationCoords(hit.lat, hit.lng, hit.label || value);
+  renderRouteMap();
+  scheduleAutoEstimate();
+  return true;
+}
+
+function scheduleAutoEstimate() {
+  if (state.routeAutoTimer) clearTimeout(state.routeAutoTimer);
+  state.routeAutoTimer = setTimeout(async () => {
+    const { origin, destination } = getRideFormCoords();
+    if (!origin || !destination) return;
+    try {
+      await calculateRoute();
+      await estimateFare();
+    } catch {}
+  }, 420);
+}
+
 function renderRouteMap() {
   const form = $('#rideForm');
   if (!form) return;
@@ -918,6 +987,10 @@ function renderRouteMap() {
   const destination = form.elements.destination.value || 'Destino';
   const distanceKm = Number(form.elements.distanceKm.value || 0);
   const minutes = Number(form.elements.minutes.value || 0);
+  const distancePreview = $('#rideDistancePreview');
+  const minutesPreview = $('#rideMinutesPreview');
+  if (distancePreview) distancePreview.textContent = distanceKm > 0 ? `${distanceKm} km` : '- km';
+  if (minutesPreview) minutesPreview.textContent = minutes > 0 ? `${minutes} min` : '- min';
   const { origin: originCoords, destination: destinationCoords } = getRideFormCoords();
 
   if (state.map && hasLeaflet()) {
@@ -1038,6 +1111,7 @@ async function capturePassengerLocation() {
     setOriginCoords(latitude, longitude, 'Minha localização atual');
     $('#locationText').textContent = `Localização capturada: ${coordFmt(latitude)}, ${coordFmt(longitude)} • precisão aprox. ${Math.round(accuracy || 0)}m`;
     renderRouteMap();
+    scheduleAutoEstimate();
     toast('Localização do passageiro capturada.', 'ok');
   } catch (error) {
     toast('Não consegui capturar a localização. Verifique a permissão do navegador.', 'error');
@@ -1057,6 +1131,7 @@ async function geocodeField(type) {
   if (type === 'destination') setDestinationCoords(place.lat, place.lng, bestLabel);
   field.value = bestLabel;
   renderRouteMap();
+  scheduleAutoEstimate();
   toast(`${type === 'origin' ? 'Origem' : 'Destino'} encontrado no mapa.`, 'ok');
 }
 
@@ -1226,7 +1301,9 @@ async function loadAdminDashboard() {
   renderMetrics(data.stats);
   fillTariffForm(data.tariffRules);
   const drivers = data.users.filter(u => u.role === 'driver');
+  const passengers = data.users.filter(u => u.role === 'passenger');
   $('#driversList').innerHTML = drivers.length ? drivers.map(driverItem).join('') : '<div class="empty">Nenhum motorista cadastrado.</div>';
+  $('#passengersList').innerHTML = passengers.length ? passengers.map(passengerItem).join('') : '<div class="empty">Nenhum passageiro cadastrado.</div>';
   $('#adminRides').innerHTML = data.rides.length ? data.rides.map(r => rideItem(r, { admin: true })).join('') : '<div class="empty">Nenhuma corrida cadastrada.</div>';
   $('#adminSupportList').innerHTML = data.supportTickets?.length ? data.supportTickets.map(supportItem).join('') : '<div class="empty">Nenhum chamado aberto.</div>';
   $('#adminReportsList').innerHTML = data.rideReports?.length ? data.rideReports.map(reportItem).join('') : '<div class="empty">Nenhuma denúncia registrada.</div>';
@@ -1328,6 +1405,22 @@ function driverItem(driver) {
   `;
 }
 
+function passengerItem(passenger) {
+  return `
+    <div class="item">
+      <header>
+        <div>
+          <strong>${passenger.name}</strong>
+          <small>${passenger.phone}</small><br>
+          <small>Saldo: ${money(passenger.walletBalance || 0)}</small><br>
+          <small>Cadastro: ${dateFmt(passenger.createdAt)}</small>
+        </div>
+        ${statusBadge(passenger.status)}
+      </header>
+    </div>
+  `;
+}
+
 function supportItem(ticket) {
   return `
     <div class="item">
@@ -1396,6 +1489,19 @@ function renderApiBaseStatus() {
   }
 }
 
+function wireAddressAutocomplete() {
+  const form = $('#rideForm');
+  if (!form) return;
+  const originInput = form.elements.origin;
+  const destinationInput = form.elements.destination;
+  originInput?.addEventListener('input', () => requestAddressSuggestions('origin', originInput.value));
+  destinationInput?.addEventListener('input', () => requestAddressSuggestions('destination', destinationInput.value));
+  originInput?.addEventListener('change', () => { applyKnownSuggestion('origin'); });
+  destinationInput?.addEventListener('change', () => { applyKnownSuggestion('destination'); });
+  originInput?.addEventListener('blur', () => { applyKnownSuggestion('origin'); });
+  destinationInput?.addEventListener('blur', () => { applyKnownSuggestion('destination'); });
+}
+
 function setApiBaseUrl(value) {
   const url = String(value || '').trim().replace(/\/$/, '');
   if (url && !/^https?:\/\//i.test(url)) {
@@ -1411,6 +1517,7 @@ function setApiBaseUrl(value) {
 
 function wireEvents() {
   renderApiBaseStatus();
+  wireAddressAutocomplete();
 
   wirePhoneInput('#loginForm input[name="phone"]', true);
   wirePhoneInput('#registerForm input[name="phone"]', false);

@@ -158,7 +158,7 @@
           <h2>Pedir corrida</h2>
           <form id="rideForm" class="form">
             <label>Origem
-              <input name="origin" placeholder="Ex.: Centro, mercado, casa" required>
+              <input name="origin" list="originSuggestions" placeholder="Ex.: Centro, mercado, casa" required>
             </label>
             <div class="location-row">
               <button type="button" id="useLocationBtn" class="ghost dark">Usar minha localização</button>
@@ -168,22 +168,32 @@
             <input type="hidden" name="originLat">
             <input type="hidden" name="originLng">
             <label>Destino
-              <input name="destination" placeholder="Ex.: Hospital, rodoviária, bairro" required>
+              <input name="destination" list="destinationSuggestions" placeholder="Ex.: Hospital, rodoviária, bairro" required>
             </label>
             <div class="location-row">
               <button type="button" id="lookupDestinationBtn" class="ghost dark">Buscar destino no mapa</button>
               <button type="button" id="calculateRouteBtn" class="ghost dark">Calcular rota real</button>
               <small id="destinationText" class="muted">Destino ainda sem coordenadas.</small>
             </div>
+            <datalist id="originSuggestions"></datalist>
+            <datalist id="destinationSuggestions"></datalist>
             <input type="hidden" name="destinationLat">
             <input type="hidden" name="destinationLng">
-            <div class="grid two compact">
-              <label>Distância estimada (km)
-                <input name="distanceKm" type="number" min="0.5" step="0.1" value="2.5">
-              </label>
-              <label>Tempo estimado (min)
-                <input name="minutes" type="number" min="3" step="1" value="10">
-              </label>
+            <input name="distanceKm" type="hidden" value="2.5">
+            <input name="minutes" type="hidden" value="10">
+            <div class="ride-flow-card">
+              <div>
+                <span>Distância</span>
+                <strong id="rideDistancePreview">- km</strong>
+              </div>
+              <div>
+                <span>Tempo</span>
+                <strong id="rideMinutesPreview">- min</strong>
+              </div>
+              <div>
+                <span>Valor estimado</span>
+                <strong id="farePreview">R$ 0,00</strong>
+              </div>
             </div>
             <label>Pagamento
               <select name="paymentMethod">
@@ -195,13 +205,9 @@
             <label>Observação
               <input name="notes" placeholder="Ex.: estou no portão azul">
             </label>
-            <div class="fare-box">
-              <span>Estimativa</span>
-              <strong id="farePreview">R$ 0,00</strong>
-            </div>
-            <small id="routeModeText" class="muted">Distância manual até calcular rota real.</small>
-            <button type="button" id="estimateBtn" class="ghost dark">Calcular valor</button>
-            <button type="submit">Solicitar corrida</button>
+            <small id="routeModeText" class="muted">Defina origem e destino para calcular a rota automaticamente.</small>
+            <button type="button" id="estimateBtn" class="ghost dark">Atualizar estimativa</button>
+            <button type="submit">Confirmar solicitação</button>
           </form>
         </article>
 
@@ -310,6 +316,13 @@
             <h2>Motoristas</h2>
             <div id="driversList" class="list"></div>
           </article>
+          <article class="card">
+            <h2>Passageiros cadastrados</h2>
+            <p class="muted">Todos os cadastros ficam salvos no banco SQLite da plataforma.</p>
+            <div id="passengersList" class="list"></div>
+          </article>
+        </div>
+        <div class="grid two">
           <article class="card">
             <h2>Todas as corridas</h2>
             <div id="adminRides" class="list"></div>

@@ -355,6 +355,36 @@ input::placeholder, textarea::placeholder { color: #94a3b8; }
 .driver-fields { padding: 14px; border-radius: 20px; background: #f8fbfe; border: 1px dashed #b9d9e8; }
 .docs-note { display: block; margin-top: 8px; padding: 8px 10px; border-radius: 12px; background: #f8fafc; border: 1px solid #e2e8f0; color: var(--muted); }
 
+.ride-flow-card {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid #dbeaf2;
+  background: linear-gradient(180deg, #f8fdff, #f1f9ff);
+}
+
+.ride-flow-card > div {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid #d7e6ef;
+  background: #fff;
+}
+
+.ride-flow-card span {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.ride-flow-card strong {
+  font-size: 15px;
+  letter-spacing: -.01em;
+}
+
 /* BUTTONS */
 button, .button-link {
   appearance: none;
@@ -611,6 +641,7 @@ button:disabled { opacity: .62; cursor: not-allowed; transform: none; }
   .hero { padding-bottom: 86px; }
   .hero-card { min-height: 210px; }
   .wide { grid-column: auto; }
+  .ride-flow-card { grid-template-columns: 1fr; }
 }
 @media (max-width: 720px) {
   .topbar, .hero-content, .container { width: min(100% - 24px, 1180px); }

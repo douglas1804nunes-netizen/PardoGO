@@ -2151,6 +2151,26 @@ async function handleApi(req, res, url) {
       });
     }
 
+    if (method === 'GET' && pathname === '/api/admin/users') {
+      const user = requireAuth(req, res, ['admin']);
+      if (!user) return;
+      const users = getAllUsers().map(publicUser);
+      const drivers = users.filter(item => item.role === 'driver');
+      const passengers = users.filter(item => item.role === 'passenger');
+      return send(res, 200, {
+        ok: true,
+        summary: {
+          total: users.length,
+          drivers: drivers.length,
+          passengers: passengers.length,
+          admins: users.filter(item => item.role === 'admin').length
+        },
+        drivers,
+        passengers,
+        users
+      });
+    }
+
     if (method === 'PATCH' && pathname === '/api/admin/tariff') {
       const user = requireAuth(req, res, ['admin']);
       if (!user) return;
