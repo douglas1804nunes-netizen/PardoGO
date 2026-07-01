@@ -1,0 +1,49 @@
+{
+  "name": "pardogo-etapa14",
+  "version": "1.4.0",
+  "description": "PardoGo Etapa 14 - preparação do aplicativo Android com Capacitor, configuração de API online, CORS mobile, build e guia Android Studio.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --no-warnings server.js",
+    "test": "node --no-warnings scripts/test.js",
+    "doctor": "node --no-warnings scripts/doctor.js",
+    "backup": "node --no-warnings scripts/backup.js",
+    "mobile:check": "node --no-warnings scripts/mobile-check.js",
+    "android:build:debug": "node --no-warnings scripts/android-build-debug.js",
+    "cap:add:android": "npx cap add android",
+    "cap:sync:android": "npx cap sync android",
+    "cap:copy": "npx cap copy",
+    "cap:open:android": "npx cap open android"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "keywords": [
+    "deploy",
+    "https",
+    "dominio",
+    "backup",
+    "sqlite",
+    "node",
+    "pwa",
+    "leaflet",
+    "openstreetmap",
+    "santa-rita-do-pardo",
+    "transporte",
+    "tempo-real",
+    "lgpd",
+    "capacitor",
+    "android",
+    "mobile",
+    "app"
+  ],
+  "author": "VDB / Bianca",
+  "license": "MIT",
+  "dependencies": {
+    "@capacitor/core": "^7.4.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.4.3",
+    "@capacitor/android": "^7.4.3"
+  }
+}

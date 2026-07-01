@@ -1,0 +1,21 @@
+{
+  "appId": "br.com.pardogo.app",
+  "appName": "PardoGo",
+  "webDir": "public",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "backgroundColor": "#061827",
+      "showSpinner": false
+    },
+    "Geolocation": {
+      "permissions": [
+        "location"
+      ]
+    }
+  }
+}
