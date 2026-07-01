@@ -86,6 +86,27 @@ window.PARDOGO_MOBILE_CONFIG = {
 Com `autoSelectProfile: true`, o app usa a URL do perfil definido em `appStage`.
 Para build de produção, troque `appStage` para `production` e configure sua API HTTPS real em `profiles.production`.
 
+## Assinatura Android de produção
+
+Para gerar APK de produção assinado com seu certificado:
+
+1. Crie uma cópia de `android/keystore.properties.example` com o nome `android/keystore.properties`.
+2. Preencha o caminho do seu `.jks` e as credenciais da chave.
+3. Rode o build release no Android:
+
+```bash
+cd android
+./gradlew assembleRelease
+```
+
+Saída esperada:
+
+```text
+android/app/build/outputs/apk/release/app-release.apk
+```
+
+Se `android/keystore.properties` não existir, o build release continua possível, mas sai sem assinatura de produção.
+
 ## Gerar projeto Android
 
 Instale dependências:
