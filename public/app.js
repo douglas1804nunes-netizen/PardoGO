@@ -55,6 +55,7 @@ const coordFmt = value => Number(value).toFixed(5).replace('.', ',');
 const hasGeo = () => 'geolocation' in navigator;
 const hasLeaflet = () => Boolean(window.L && typeof window.L.map === 'function');
 const LOGIN_DEFAULT_STATUS = 'Informe seu telefone e senha para acessar.';
+const MAIN_TAB_TARGETS = ['passengerPanel', 'driverPanel'];
 
 function debounce(fn, delay = 350) {
   let timer = null;
@@ -86,12 +87,22 @@ function currentIntentArea() {
   return routeIntent().area;
 }
 
+function visibleTabTargetsForCurrentUser() {
+  if (!state.user) return [...MAIN_TAB_TARGETS];
+  if (state.user.role === 'driver') return ['driverPanel'];
+  return ['passengerPanel'];
+}
+
+function updateMainTabsVisibility() {
+  const visibleTargets = new Set(visibleTabTargetsForCurrentUser());
+  $$('.tab').forEach(button => {
+    const target = String(button.dataset.target || '').trim();
+    button.classList.toggle('hidden', !visibleTargets.has(target));
+  });
+}
+
 function canOpenArea(areaId) {
-  if (!state.user) return areaId === 'passengerPanel';
-  if (state.user.role === 'admin') return true;
-  if (state.user.role === 'passenger') return areaId === 'passengerPanel';
-  if (state.user.role === 'driver') return areaId === 'driverPanel';
-  return false;
+  return visibleTabTargetsForCurrentUser().includes(areaId);
 }
 
 function targetAreaForCurrentUser() {
@@ -303,7 +314,7 @@ function roleLabel(role) {
 
 
 function areaForRole(role) {
-  return { admin: 'adminPanel', driver: 'driverPanel', passenger: 'passengerPanel' }[role] || 'passengerPanel';
+  return role === 'driver' ? 'driverPanel' : 'passengerPanel';
 }
 
 function setFormStatus(id, message, type = '') {
@@ -510,10 +521,13 @@ function setFormBusy(form, busy) {
 }
 
 function activateTab(targetId) {
-  const target = targetId || areaForRole(state.user?.role);
+  updateMainTabsVisibility();
+  const visibleTargets = visibleTabTargetsForCurrentUser();
+  const preferred = targetId || areaForRole(state.user?.role);
+  const target = visibleTargets.includes(preferred) ? preferred : (visibleTargets[0] || 'passengerPanel');
   if (!canOpenArea(target)) {
-    const fallback = areaForRole(state.user?.role);
-    if (target !== fallback) {
+    const fallback = visibleTargets[0] || 'passengerPanel';
+    if (preferred !== fallback) {
       setFormStatus('#loginStatus', 'Acesse com o perfil correto para abrir esta aba.', 'error');
       toast('Aba não disponível para o perfil atual.', 'error');
     }
@@ -664,6 +678,7 @@ function renderSession() {
     setFormStatus('#loginStatus', LOGIN_DEFAULT_STATUS, '');
     renderWalletBalance();
   }
+  updateMainTabsVisibility();
   protectPanels();
   refreshActiveArea();
 }
