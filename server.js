@@ -1237,6 +1237,19 @@ async function geocodeAddress(query) {
   }));
 }
 
+async function reverseGeocodeCoords(lat, lng) {
+  if (!isValidLatLng(lat, lng)) return null;
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1`;
+  const data = await fetchJsonWithTimeout(url).catch(() => null);
+  if (!data) return null;
+  return {
+    label: String(data.display_name || '').trim(),
+    lat: roundCoord(data.lat ?? lat),
+    lng: roundCoord(data.lon ?? lng),
+    source: 'nominatim-reverse'
+  };
+}
+
 async function calculateRoute(origin, destination) {
   const straightLineKm = haversineDistanceKm(origin, destination);
   if (!isValidLatLng(origin?.lat, origin?.lng) || !isValidLatLng(destination?.lat, destination?.lng)) {
@@ -1782,6 +1795,27 @@ async function handleApi(req, res, url) {
       if (!q.trim()) return send(res, 400, { ok: false, error: 'Informe o endereço para buscar.' });
       const results = await geocodeAddress(q);
       return send(res, 200, { ok: true, query: q, results, fallbackCenter: MAP_DEFAULT_CENTER });
+    }
+
+    if (method === 'GET' && pathname === '/api/maps/reverse-geocode') {
+      const lat = Number(url.searchParams.get('lat'));
+      const lng = Number(url.searchParams.get('lng'));
+      if (!isValidLatLng(lat, lng)) {
+        return send(res, 400, { ok: false, error: 'Latitude/longitude inválidas.' });
+      }
+      const result = await reverseGeocodeCoords(lat, lng);
+      if (!result) {
+        return send(res, 200, {
+          ok: true,
+          result: {
+            label: `Ponto ${roundCoord(lat)}, ${roundCoord(lng)}`,
+            lat: roundCoord(lat),
+            lng: roundCoord(lng),
+            source: 'fallback-coords'
+          }
+        });
+      }
+      return send(res, 200, { ok: true, result });
     }
 
     if (method === 'POST' && pathname === '/api/maps/route') {

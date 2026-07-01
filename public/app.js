@@ -728,14 +728,8 @@ function initMap() {
     const form = $('#rideForm');
     if (!form) return;
     const { lat, lng } = event.latlng;
-    if (!form.elements.originLat.value) {
-      setOriginCoords(lat, lng, form.elements.origin.value || 'Ponto selecionado no mapa');
-      toast('Origem marcada no mapa.', 'ok');
-    } else {
-      setDestinationCoords(lat, lng, form.elements.destination.value || 'Destino selecionado no mapa');
-      toast('Destino marcado no mapa.', 'ok');
-    }
-    renderRouteMap();
+    const target = !form.elements.originLat.value ? 'origin' : 'destination';
+    setPointFromMap(target, lat, lng).finally(() => renderRouteMap());
   });
 }
 
@@ -854,6 +848,67 @@ function setDestinationCoords(lat, lng, label = 'Destino') {
   state.destinationPosition = { lat: Number(lat), lng: Number(lng), label };
   if (!form.elements.destination.value.trim()) form.elements.destination.value = label;
   $('#destinationText').textContent = `Destino: ${coordFmt(lat)}, ${coordFmt(lng)}`;
+}
+
+function clearRideCoords(type) {
+  const form = $('#rideForm');
+  if (!form) return;
+  if (type === 'origin') {
+    form.elements.originLat.value = '';
+    form.elements.originLng.value = '';
+    state.currentPosition = null;
+    $('#locationText').textContent = 'Origem sem coordenadas. Use mapa, localização ou busca.';
+  }
+  if (type === 'destination') {
+    form.elements.destinationLat.value = '';
+    form.elements.destinationLng.value = '';
+    state.destinationPosition = null;
+    $('#destinationText').textContent = 'Destino sem coordenadas. Use mapa ou busca para definir com precisão.';
+  }
+  state.currentRoute = null;
+}
+
+async function reverseGeocode(lat, lng) {
+  const data = await api(`/api/maps/reverse-geocode?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`);
+  return String(data.result?.label || '').trim();
+}
+
+async function setPointFromMap(type, lat, lng) {
+  const form = $('#rideForm');
+  if (!form) return;
+  const fallback = type === 'origin' ? 'Origem selecionada no mapa' : 'Destino selecionado no mapa';
+  let label = fallback;
+  try {
+    const resolved = await reverseGeocode(lat, lng);
+    if (resolved) label = resolved;
+  } catch {}
+  if (type === 'origin') {
+    setOriginCoords(lat, lng, label);
+    form.elements.origin.value = label;
+    toast('Origem marcada no mapa.', 'ok');
+  } else {
+    setDestinationCoords(lat, lng, label);
+    form.elements.destination.value = label;
+    toast('Destino marcado no mapa.', 'ok');
+  }
+}
+
+async function resolveRideFieldByGeocode(type) {
+  const form = $('#rideForm');
+  if (!form) return null;
+  const field = type === 'origin' ? form.elements.origin : form.elements.destination;
+  const query = String(field.value || '').trim();
+  if (!query) return null;
+  const data = await api(`/api/maps/geocode?q=${encodeURIComponent(query)}`);
+  if (!Array.isArray(data.results) || !data.results.length) {
+    throw new Error(type === 'origin' ? 'Origem não encontrada no mapa.' : 'Destino não encontrado no mapa.');
+  }
+  const place = data.results[0];
+  const bestLabel = String(place.label || query).trim();
+  if (type === 'origin') setOriginCoords(place.lat, place.lng, bestLabel);
+  if (type === 'destination') setDestinationCoords(place.lat, place.lng, bestLabel);
+  field.value = bestLabel;
+  return place;
 }
 
 function renderRouteMap() {
@@ -997,8 +1052,10 @@ async function geocodeField(type) {
   const data = await api(`/api/maps/geocode?q=${encodeURIComponent(query)}`);
   if (!data.results.length) return toast('Endereço não encontrado. Tente colocar bairro, rua ou ponto de referência.', 'error');
   const place = data.results[0];
-  if (type === 'origin') setOriginCoords(place.lat, place.lng, query);
-  if (type === 'destination') setDestinationCoords(place.lat, place.lng, query);
+  const bestLabel = String(place.label || query).trim();
+  if (type === 'origin') setOriginCoords(place.lat, place.lng, bestLabel);
+  if (type === 'destination') setDestinationCoords(place.lat, place.lng, bestLabel);
+  field.value = bestLabel;
   renderRouteMap();
   toast(`${type === 'origin' ? 'Origem' : 'Destino'} encontrado no mapa.`, 'ok');
 }
@@ -1490,17 +1547,29 @@ function wireEvents() {
 
   ['origin', 'destination', 'distanceKm', 'minutes'].forEach(name => {
     const field = $('#rideForm').elements[name];
-    if (field) field.addEventListener('input', () => renderRouteMap());
+    if (!field) return;
+    field.addEventListener('input', () => {
+      if (name === 'origin') clearRideCoords('origin');
+      if (name === 'destination') clearRideCoords('destination');
+      renderRouteMap();
+    });
   });
 
   $('#rideForm').addEventListener('submit', async event => {
     event.preventDefault();
     if (!state.user || !['passenger', 'admin'].includes(state.user.role)) return toast('Entre como passageiro para pedir corrida.', 'error');
     try {
-      const { origin, destination } = getRideFormCoords();
-      if (origin && destination) await calculateRoute();
+      const form = event.currentTarget;
+      let { origin, destination } = getRideFormCoords();
+      if (!origin) await resolveRideFieldByGeocode('origin');
+      if (!destination) await resolveRideFieldByGeocode('destination');
+      ({ origin, destination } = getRideFormCoords());
+      if (!origin || !destination) {
+        throw new Error('Defina origem e destino válidos no mapa antes de solicitar a corrida.');
+      }
+      await calculateRoute();
       await estimateFare();
-      const body = Object.fromEntries(new FormData(event.currentTarget).entries());
+      const body = Object.fromEntries(new FormData(form).entries());
       body.distanceKm = Number(body.distanceKm || 0);
       body.minutes = Number(body.minutes || 0);
       body.originLat = body.originLat ? Number(body.originLat) : null;
