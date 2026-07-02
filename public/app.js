@@ -1,3 +1,13 @@
+const OFFICIAL_PRODUCTION_API = 'https://pardogo.onrender.com';
+const LEGACY_API_BASES = ['https://pardogo-8yn0.onrender.com'];
+
+function normalizeKnownApiBase(value) {
+  const base = String(value || '').trim().replace(/\/$/, '');
+  if (!base) return '';
+  if (LEGACY_API_BASES.includes(base)) return OFFICIAL_PRODUCTION_API;
+  return base;
+}
+
 function initialApiBaseUrl() {
   const cfg = window.PARDOGO_MOBILE_CONFIG || {};
   const profiles = cfg.profiles && typeof cfg.profiles === 'object' ? cfg.profiles : null;
@@ -5,17 +15,17 @@ function initialApiBaseUrl() {
 
   if (useProfile) {
     const stage = String(cfg.appStage || 'development').trim().toLowerCase();
-    const profileUrl = String(profiles[stage] || '').trim();
+    const profileUrl = normalizeKnownApiBase(profiles[stage]);
     if (profileUrl) return profileUrl;
   }
 
-  const configured = String(cfg.apiBaseUrl || '').trim();
+  const configured = normalizeKnownApiBase(cfg.apiBaseUrl);
   if (configured) return configured;
 
-  const saved = localStorage.getItem('pardogo_api_base');
+  const saved = normalizeKnownApiBase(localStorage.getItem('pardogo_api_base'));
   if (saved) return saved;
 
-  return '';
+  return OFFICIAL_PRODUCTION_API;
 }
 
 const state = {
@@ -102,7 +112,7 @@ function visibleTabTargetsForCurrentUser() {
   if (!state.user) return [...MAIN_TAB_TARGETS];
   if (state.user.role === 'driver') return ['driverPanel'];
   if (state.user.role === 'admin' && ADMIN_WEB_ONLY && IS_NATIVE_APP) return [];
-  if (state.user.role === 'admin') return ['adminPanel', 'securityPanel'];
+  if (state.user.role === 'admin') return [...ADMIN_MONITOR_TAB_TARGETS];
   return ['passengerPanel'];
 }
 
@@ -158,15 +168,22 @@ async function api(path, options = {}) {
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   const base = normalizedApiBase();
   const primaryUrl = apiUrl(path);
+  const fallbacks = [];
+  if (base && OFFICIAL_PRODUCTION_API !== base) {
+    fallbacks.push(`${OFFICIAL_PRODUCTION_API}${path.startsWith('/') ? path : `/${path}`}`);
+  }
+  if (base) {
+    fallbacks.push(path);
+  }
   let response;
 
   try {
     response = await fetch(primaryUrl, { ...options, headers });
   } catch (networkError) {
-    if (base) {
+    for (const fallbackUrl of fallbacks) {
       try {
-        // Fallback para mesma origem quando a API configurada está indisponível.
-        response = await fetch(path, { ...options, headers });
+        response = await fetch(fallbackUrl, { ...options, headers });
+        if (response) break;
       } catch {}
     }
     if (!response) {
@@ -1414,6 +1431,17 @@ async function loadAdminDashboard() {
   renderAdminPixTopups(data.pixTopupsPending || []);
   $('#adminSupportList').innerHTML = data.supportTickets?.length ? data.supportTickets.map(supportItem).join('') : '<div class="empty">Nenhum chamado aberto.</div>';
   $('#adminReportsList').innerHTML = data.rideReports?.length ? data.rideReports.map(reportItem).join('') : '<div class="empty">Nenhuma denúncia registrada.</div>';
+  const monitorRides = data.rides.filter(ride => ['pending', 'accepted'].includes(ride.status));
+  $('#driverRides').innerHTML = monitorRides.length
+    ? monitorRides.map(r => rideItem(r, { admin: true })).join('')
+    : '<div class="empty">Nenhuma corrida para monitoramento.</div>';
+  $('#driverStatusBadge').textContent = 'Monitoramento admin';
+  $('#driverStatusBadge').className = 'badge ok';
+  const toggleBtn = $('#toggleOnlineBtn');
+  const locationBtn = $('#driverLocationBtn');
+  if (toggleBtn) toggleBtn.disabled = true;
+  if (locationBtn) locationBtn.disabled = true;
+  $('#driverLocationText').textContent = 'Aba motorista em modo monitoramento para administrador.';
   $('#exportLink').onclick = async e => {
     e.preventDefault();
     try {
@@ -1600,12 +1628,14 @@ async function loadSecurityData() {
 async function refreshActiveArea() {
   if (!state.user) return;
   try {
-    if (state.user.role === 'passenger') await loadPassengerRides();
-    if (state.user.role === 'driver') await loadDriverRides();
-    await loadSecurityData().catch(() => {});
+    if (state.user.role === 'passenger') await Promise.allSettled([loadPassengerRides(), loadSecurityData()]);
+    if (state.user.role === 'driver') await Promise.allSettled([loadDriverRides(), loadSecurityData()]);
     if (state.user.role === 'admin') {
-      await loadPassengerRides().catch(() => {});
-      await loadAdminDashboard();
+      await Promise.allSettled([
+        loadPassengerRides(),
+        loadAdminDashboard(),
+        loadSecurityData()
+      ]);
     }
   } catch (error) {
     console.warn(error);
@@ -1637,7 +1667,7 @@ function wireAddressAutocomplete() {
 }
 
 function setApiBaseUrl(value) {
-  const url = String(value || '').trim().replace(/\/$/, '');
+  const url = normalizeKnownApiBase(value);
   if (url && !/^https?:\/\//i.test(url)) {
     throw new Error('Informe uma URL começando com http:// ou https://.');
   }
@@ -1714,7 +1744,7 @@ function wireEvents() {
     try {
       const data = await api('/api/admin/drivers/approve-pending', { method: 'PATCH' });
       toast(`${data.updated || 0} motorista(s) aprovado(s).`, 'ok');
-      await loadAdminDashboard();
+      await refreshActiveArea();
     } catch (error) {
       toast(error.message, 'error');
     }
@@ -1956,7 +1986,7 @@ function wireEvents() {
       const data = await api('/api/admin/tariff', { method: 'PATCH', body: JSON.stringify(body) });
       state.tariffRules = data.tariffRules;
       await loadConfig();
-      await loadAdminDashboard();
+      await refreshActiveArea();
       toast('Tarifas atualizadas.', 'ok');
     } catch (error) {
       toast(error.message, 'error');
@@ -1999,7 +2029,7 @@ function wireEvents() {
           body: JSON.stringify({ approve: true })
         });
         toast('PIX confirmado. Saldo liberado para o usuário.', 'ok');
-        await loadAdminDashboard();
+        await refreshActiveArea();
       } catch (error) {
         toast(error.message, 'error');
       }
@@ -2015,7 +2045,7 @@ function wireEvents() {
           body: JSON.stringify({ approve: false, note })
         });
         toast('Solicitação PIX recusada.', 'ok');
-        await loadAdminDashboard();
+        await refreshActiveArea();
       } catch (error) {
         toast(error.message, 'error');
       }
@@ -2054,7 +2084,7 @@ function wireEvents() {
       try {
         await api(`/api/rides/${adminFinish.dataset.adminFinish}/finish`, { method: 'PATCH' });
         toast('Corrida finalizada pelo admin.', 'ok');
-        await loadAdminDashboard();
+        await refreshActiveArea();
       } catch (error) { toast(error.message, 'error'); }
       return;
     }
@@ -2118,7 +2148,7 @@ function wireEvents() {
           body: JSON.stringify({ documentStatus: docStatus.dataset.docStatus, documentsNote: note })
         });
         toast('Status documental atualizado.', 'ok');
-        await loadAdminDashboard();
+        await refreshActiveArea();
       } catch (error) { toast(error.message, 'error'); }
       return;
     }
@@ -2131,7 +2161,7 @@ function wireEvents() {
           body: JSON.stringify({ status: driverStatus.dataset.driverStatus })
         });
         toast('Status do motorista atualizado.', 'ok');
-        await loadAdminDashboard();
+        await refreshActiveArea();
       } catch (error) { toast(error.message, 'error'); }
     }
   });
