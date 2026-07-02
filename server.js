@@ -40,10 +40,20 @@ const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || '').trim();
 const FORCE_HTTPS = process.env.FORCE_HTTPS === '1';
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 const REQUIRE_SECURE_ENV = process.env.REQUIRE_SECURE_ENV === '1';
-const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
+const APP_BASE_ORIGIN = (() => {
+  try { return new URL(APP_BASE_URL).origin; } catch { return ''; }
+})();
+const CORS_ORIGIN = String(process.env.CORS_ORIGIN || APP_BASE_ORIGIN || '').trim();
+const CORS_ALLOW_ALL = CORS_ORIGIN === '*';
+const CORS_ALLOWED_ORIGINS = CORS_ALLOW_ALL
+  ? ['*']
+  : CORS_ORIGIN.split(',').map(item => item.trim()).filter(Boolean);
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX || 300);
 const rateLimitBuckets = new Map();
+const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
+const LOGIN_LOCK_MINUTES = Number(process.env.LOGIN_LOCK_MINUTES || 15);
+const loginAttemptBuckets = new Map();
 const MAP_DEFAULT_CENTER = { lat: -21.302, lng: -52.833, label: 'Santa Rita do Pardo - MS' };
 const CITY_GEOFENCE_RADIUS_KM = Number(process.env.CITY_GEOFENCE_RADIUS_KM || 55);
 const CITY_AVERAGE_SPEED_KMH = Number(process.env.CITY_AVERAGE_SPEED_KMH || 28);
@@ -55,6 +65,7 @@ const PIX_KEY = String(process.env.PIX_KEY || ADMIN_INITIAL_PHONE || '').trim();
 const PIX_MERCHANT_NAME = String(process.env.PIX_MERCHANT_NAME || 'PARDOGO').trim();
 const PIX_MERCHANT_CITY = String(process.env.PIX_MERCHANT_CITY || 'SANTA RITA DO PARDO').trim();
 const PIX_DESCRIPTION = String(process.env.PIX_DESCRIPTION || 'RECARGA PARDOGO').trim();
+const PIX_WEBHOOK_SECRET = String(process.env.PIX_WEBHOOK_SECRET || '').trim();
 
 const defaultTariffRules = {
   base: 5,
@@ -878,6 +889,12 @@ function confirmPixTopupByAdmin(topupId, adminUserId, approve = true, adminNote 
   return rowToPixTopup(db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(topup.id));
 }
 
+function confirmPixTopupByTxid(txid, approve = true, adminNote = '', actorId = null) {
+  const row = db.prepare('SELECT id FROM pix_topups WHERE txid = ? ORDER BY created_at DESC LIMIT 1').get(String(txid || '').trim());
+  if (!row?.id) return null;
+  return confirmPixTopupByAdmin(row.id, actorId, approve, adminNote);
+}
+
 function topupWallet(userId, amount, method = 'Pix', options = {}) {
   const value = Number(Number(amount || 0).toFixed(2));
   if (!Number.isFinite(value) || value <= 0) throw new Error('Informe um valor válido para recarga.');
@@ -1078,17 +1095,19 @@ function getAllRides() {
 }
 
 
-function securityHeaders(extra = {}) {
+function securityHeaders(extra = {}, req = null) {
+  const corsOrigin = resolveCorsOrigin(req);
   const headers = {
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'X-Frame-Options': 'DENY',
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Permissions-Policy': 'geolocation=(self), camera=(), microphone=(), payment=()',
-    'Access-Control-Allow-Origin': CORS_ORIGIN,
+    'Access-Control-Allow-Origin': corsOrigin,
     'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Max-Age': '86400',
+    'Vary': 'Origin',
     'Content-Security-Policy': [
       "default-src 'self'",
       "script-src 'self' https://unpkg.com https://accounts.google.com https://apis.google.com",
@@ -1117,8 +1136,79 @@ function getClientIp(req) {
   return String(req.socket.remoteAddress || 'local');
 }
 
+function resolveCorsOrigin(req) {
+  if (CORS_ALLOW_ALL) return '*';
+  const requestOrigin = String(req?.headers?.origin || '').trim();
+  if (!requestOrigin) return CORS_ALLOWED_ORIGINS[0] || APP_BASE_ORIGIN || '';
+  if (CORS_ALLOWED_ORIGINS.includes(requestOrigin)) return requestOrigin;
+  return CORS_ALLOWED_ORIGINS[0] || APP_BASE_ORIGIN || '';
+}
+
+function loginAttemptKey(req, phone) {
+  return `${getClientIp(req)}:${String(phone || '').trim().toLowerCase()}`;
+}
+
+function clearLoginFailures(req, phone) {
+  loginAttemptBuckets.delete(loginAttemptKey(req, phone));
+}
+
+function noteLoginFailure(req, phone) {
+  const key = loginAttemptKey(req, phone);
+  const now = Date.now();
+  const lockMs = Math.max(LOGIN_LOCK_MINUTES, 1) * 60_000;
+  const bucket = loginAttemptBuckets.get(key) || { failures: 0, lockedUntil: 0, updatedAt: now };
+  if (bucket.lockedUntil && bucket.lockedUntil <= now) {
+    bucket.failures = 0;
+    bucket.lockedUntil = 0;
+  }
+  bucket.failures += 1;
+  bucket.updatedAt = now;
+  if (bucket.failures >= Math.max(LOGIN_MAX_ATTEMPTS, 1)) {
+    bucket.lockedUntil = now + lockMs;
+  }
+  loginAttemptBuckets.set(key, bucket);
+  return bucket;
+}
+
+function loginLockInfo(req, phone) {
+  const key = loginAttemptKey(req, phone);
+  const bucket = loginAttemptBuckets.get(key);
+  if (!bucket) return null;
+  const now = Date.now();
+  if (bucket.lockedUntil && bucket.lockedUntil > now) {
+    return {
+      locked: true,
+      retryAfterSeconds: Math.max(1, Math.ceil((bucket.lockedUntil - now) / 1000))
+    };
+  }
+  if (bucket.lockedUntil && bucket.lockedUntil <= now) {
+    loginAttemptBuckets.delete(key);
+  }
+  return null;
+}
+
+function cleanupLoginAttemptBuckets() {
+  const now = Date.now();
+  const ttl = Math.max(LOGIN_LOCK_MINUTES, 1) * 60_000 * 2;
+  for (const [key, bucket] of loginAttemptBuckets.entries()) {
+    if ((bucket.updatedAt || 0) + ttl < now) loginAttemptBuckets.delete(key);
+  }
+}
+
+function validatePixWebhookAuth(req) {
+  if (!PIX_WEBHOOK_SECRET) return { ok: false, error: 'PIX_WEBHOOK_SECRET não configurado no servidor.' };
+  const headerSecret = String(req.headers['x-pix-webhook-secret'] || '').trim();
+  const bearer = getBearerToken(req);
+  const provided = headerSecret || bearer;
+  if (!provided || provided !== PIX_WEBHOOK_SECRET) {
+    return { ok: false, error: 'Webhook PIX sem autenticação válida.' };
+  }
+  return { ok: true };
+}
+
 function isRateLimited(req) {
   if (!RATE_LIMIT_MAX || RATE_LIMIT_MAX < 1) return false;
+  cleanupLoginAttemptBuckets();
   const now = Date.now();
   const ip = getClientIp(req);
   const key = `${ip}:${Math.floor(now / RATE_LIMIT_WINDOW_MS)}`;
@@ -1151,6 +1241,12 @@ function validateProductionConfig() {
   if (NODE_ENV === 'production' && DB_PATH.includes('/tmp')) {
     warnings.push('Não use banco SQLite dentro de pasta temporária em produção.');
   }
+  if (NODE_ENV === 'production' && CORS_ALLOW_ALL) {
+    warnings.push('Evite CORS_ORIGIN=* em produção. Defina origem explícita do app/web.');
+  }
+  if (NODE_ENV === 'production' && !PIX_WEBHOOK_SECRET) {
+    warnings.push('Defina PIX_WEBHOOK_SECRET para habilitar confirmação PIX automática com segurança.');
+  }
   if (warnings.length && REQUIRE_SECURE_ENV) {
     throw new Error(`Configuração insegura para produção: ${warnings.join(' ')}`);
   }
@@ -1178,7 +1274,11 @@ function systemChecklist() {
       sessionDays: SESSION_DAYS,
       rateLimitWindowMs: RATE_LIMIT_WINDOW_MS,
       rateLimitMax: RATE_LIMIT_MAX,
-      secureAdminPasswordConfigured: ADMIN_INITIAL_PASSWORD !== '123456'
+      secureAdminPasswordConfigured: ADMIN_INITIAL_PASSWORD !== '123456',
+      loginMaxAttempts: LOGIN_MAX_ATTEMPTS,
+      loginLockMinutes: LOGIN_LOCK_MINUTES,
+      corsAllowAll: CORS_ALLOW_ALL,
+      pixWebhookConfigured: Boolean(PIX_WEBHOOK_SECRET)
     },
     productionWarnings: warnings,
     checklist: [
@@ -1200,12 +1300,12 @@ function send(res, status, payload, headers = {}) {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
     ...headers
-  }));
+  }, res.req));
   res.end(body);
 }
 
 function sendText(res, status, body, contentType = 'text/plain; charset=utf-8', headers = {}) {
-  res.writeHead(status, securityHeaders({ 'Content-Type': contentType, ...headers }));
+  res.writeHead(status, securityHeaders({ 'Content-Type': contentType, ...headers }, res.req));
   res.end(body);
 }
 
@@ -1309,11 +1409,11 @@ function handleEvents(req, res, url) {
   };
 
   res.writeHead(200, {
+    ...securityHeaders({}, req),
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache, no-transform',
     'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no',
-    'Access-Control-Allow-Origin': '*'
+    'X-Accel-Buffering': 'no'
   });
   res.write(': PardoGo tempo real conectado\n\n');
 
@@ -1865,6 +1965,27 @@ async function handleApi(req, res, url) {
       });
     }
 
+    if (method === 'POST' && pathname === '/api/webhooks/pix/confirm') {
+      const auth = validatePixWebhookAuth(req);
+      if (!auth.ok) return send(res, 401, { ok: false, error: auth.error });
+      const body = await parseBody(req);
+      const txid = String(body.txid || body.reference || '').trim();
+      if (!txid) return send(res, 400, { ok: false, error: 'Webhook PIX sem txid.' });
+      const statusRaw = String(body.status || body.event || '').trim().toLowerCase();
+      const approvedStatuses = ['paid', 'approved', 'confirmed', 'completed', 'success', 'liquidated', 'settled'];
+      const rejectedStatuses = ['rejected', 'failed', 'canceled', 'cancelled', 'chargeback', 'expired'];
+      const approve = body.approve === true || body.approve === 'true' || approvedStatuses.includes(statusRaw)
+        ? true
+        : (body.approve === false || body.approve === 'false' || rejectedStatuses.includes(statusRaw) ? false : null);
+      if (approve === null) {
+        return send(res, 400, { ok: false, error: 'Status do webhook PIX não reconhecido.' });
+      }
+      const topup = confirmPixTopupByTxid(txid, approve, String(body.note || body.message || '').slice(0, 200), null);
+      if (!topup) return send(res, 404, { ok: false, error: 'TXID PIX não encontrado.' });
+      audit(null, approve ? 'wallet_topup_pix_auto_confirmed' : 'wallet_topup_pix_auto_rejected', 'wallet', topup.userId, { pixTopupId: topup.id, txid, amount: topup.amount });
+      return send(res, 200, { ok: true, topup, message: approve ? 'PIX confirmado automaticamente.' : 'PIX rejeitado automaticamente.' });
+    }
+
     if (method === 'GET' && pathname === '/api/events') {
       return handleEvents(req, res, url);
     }
@@ -1932,6 +2053,13 @@ async function handleApi(req, res, url) {
       if (!isValidPhone(normalizedPhone)) {
         return send(res, 400, { ok: false, error: 'Informe um telefone válido com DDD.' });
       }
+      const lockInfo = loginLockInfo(req, normalizedPhone);
+      if (lockInfo?.locked) {
+        return send(res, 429, {
+          ok: false,
+          error: `Muitas tentativas de login. Tente novamente em ${lockInfo.retryAfterSeconds}s.`
+        }, { 'Retry-After': String(lockInfo.retryAfterSeconds) });
+      }
       const user = getUserByPhone(normalizedPhone);
       const legacyAdminLoginAllowed = NODE_ENV !== 'production'
         && rawPhoneInput === ADMIN_LEGACY_ALIAS
@@ -1941,8 +2069,10 @@ async function handleApi(req, res, url) {
           || (legacyAdminLoginAllowed && user.role === 'admin' && user.phone === ADMIN_INITIAL_PHONE))
         : false;
       if (!user || !passwordValid) {
+        noteLoginFailure(req, normalizedPhone);
         return send(res, 401, { ok: false, error: 'Telefone ou senha inválidos.' });
       }
+      clearLoginFailures(req, normalizedPhone);
       if (user.role === 'admin' && user.phone !== ADMIN_INITIAL_PHONE) {
         return send(res, 403, { ok: false, error: 'Este acesso administrativo foi desativado.' });
       }
@@ -2622,13 +2752,14 @@ function createServer() {
   validateProductionConfig();
   openDatabase();
   return http.createServer(async (req, res) => {
+    res.req = req;
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, securityHeaders());
+      res.writeHead(204, securityHeaders({}, req));
       return res.end();
     }
     if (shouldRedirectHttps(req)) {
-      res.writeHead(308, securityHeaders({ Location: `https://${req.headers.host}${req.url}` }));
+      res.writeHead(308, securityHeaders({ Location: `https://${req.headers.host}${req.url}` }, req));
       return res.end();
     }
     if (url.pathname.startsWith('/api/') && isRateLimited(req)) {
