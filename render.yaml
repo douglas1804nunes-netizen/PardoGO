@@ -11,6 +11,12 @@ services:
         value: production
       - key: APP_BASE_URL
         sync: false
+      - key: CANONICAL_BASE_URL
+        sync: false
+      - key: CANONICAL_REDIRECT_HOSTS
+        value: pardogo.onrender.com
+      - key: CORS_ORIGIN
+        value: https://pardogo-8yn0.onrender.com,https://pardogo.onrender.com
       - key: ADMIN_INITIAL_PHONE
         value: admin
       - key: ADMIN_INITIAL_PASSWORD

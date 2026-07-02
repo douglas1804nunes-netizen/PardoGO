@@ -32,6 +32,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'pardogo.sqlite');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const APP_BASE_URL = process.env.APP_BASE_URL || `https://pardogo-8yn0.onrender.com`;
+const CANONICAL_BASE_URL = process.env.CANONICAL_BASE_URL || APP_BASE_URL;
 const SESSION_DAYS = Number(process.env.SESSION_DAYS || 7);
 const ADMIN_INITIAL_PHONE = String(process.env.ADMIN_INITIAL_PHONE || '67999281729').trim().toLowerCase();
 const ADMIN_INITIAL_PASSWORD = String(process.env.ADMIN_INITIAL_PASSWORD || 'Duarte1052');
@@ -43,8 +44,19 @@ const REQUIRE_SECURE_ENV = process.env.REQUIRE_SECURE_ENV === '1';
 const APP_BASE_ORIGIN = (() => {
   try { return new URL(APP_BASE_URL).origin; } catch { return ''; }
 })();
+const CANONICAL_BASE_ORIGIN = (() => {
+  try { return new URL(CANONICAL_BASE_URL).origin; } catch { return APP_BASE_ORIGIN; }
+})();
+const CANONICAL_HOST = (() => {
+  try { return new URL(CANONICAL_BASE_URL).host; } catch { return ''; }
+})();
+const CANONICAL_REDIRECT_HOSTS = String(process.env.CANONICAL_REDIRECT_HOSTS || 'pardogo.onrender.com')
+  .split(',')
+  .map(item => item.trim().toLowerCase())
+  .filter(Boolean);
 const DEFAULT_CORS_ORIGINS = [
   APP_BASE_ORIGIN,
+  CANONICAL_BASE_ORIGIN,
   'https://pardogo-8yn0.onrender.com',
   'https://pardogo.onrender.com'
 ].filter((value, index, arr) => value && arr.indexOf(value) === index);
@@ -1238,6 +1250,19 @@ function shouldRedirectHttps(req) {
   if (!FORCE_HTTPS) return false;
   const proto = String(req.headers['x-forwarded-proto'] || '').toLowerCase();
   return proto !== 'https' && !req.socket.encrypted;
+}
+
+function shouldRedirectCanonical(req) {
+  if (!CANONICAL_HOST) return false;
+  const host = String(req.headers.host || '').toLowerCase().split(':')[0];
+  if (!host) return false;
+  const canonicalHost = CANONICAL_HOST.toLowerCase().split(':')[0];
+  if (host === canonicalHost) return false;
+  return CANONICAL_REDIRECT_HOSTS.includes(host);
+}
+
+function canonicalRedirectLocation(req) {
+  return `${CANONICAL_BASE_ORIGIN}${req.url}`;
 }
 
 function validateProductionConfig() {
@@ -2764,6 +2789,10 @@ function createServer() {
   return http.createServer(async (req, res) => {
     res.req = req;
     const url = new URL(req.url, `http://${req.headers.host}`);
+    if (shouldRedirectCanonical(req)) {
+      res.writeHead(308, securityHeaders({ Location: canonicalRedirectLocation(req) }, req));
+      return res.end();
+    }
     if (req.method === 'OPTIONS') {
       res.writeHead(204, securityHeaders({}, req));
       return res.end();

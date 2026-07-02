@@ -164,6 +164,44 @@ function toast(message, type = '') {
   setTimeout(() => el.classList.add('hidden'), 4200);
 }
 
+async function ensureWorkingApiBase() {
+  const current = normalizedApiBase();
+  const candidates = Array.from(new Set([
+    current,
+    OFFICIAL_PRODUCTION_API,
+    ...KNOWN_PRODUCTION_APIS,
+    ''
+  ].filter(value => value !== null && value !== undefined)));
+
+  for (const candidate of candidates) {
+    const base = String(candidate || '').trim().replace(/\/$/, '');
+    const target = base ? `${base}/api/config` : '/api/config';
+    try {
+      const response = await fetch(target, { headers: { Accept: 'application/json' } });
+      const text = await response.text();
+      let data = null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        continue;
+      }
+      if (!response.ok || !data || data.ok !== true) continue;
+
+      if (base) {
+        state.apiBaseUrl = base;
+        localStorage.setItem('pardogo_api_base', base);
+      } else {
+        state.apiBaseUrl = '';
+        localStorage.removeItem('pardogo_api_base');
+      }
+      renderApiBaseStatus();
+      return true;
+    } catch {}
+  }
+
+  return false;
+}
+
 async function api(path, options = {}, retryWithOfficial = true) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
@@ -250,7 +288,12 @@ async function api(path, options = {}, retryWithOfficial = true) {
       renderApiBaseStatus();
       return api(path, options, false);
     }
-    throw new Error('A API respondeu com conteúdo inválido em uma ou mais URLs. O app aplicou fallback automático para a URL válida.');
+    if (retryWithOfficial) {
+      state.apiBaseUrl = OFFICIAL_PRODUCTION_API;
+      localStorage.setItem('pardogo_api_base', OFFICIAL_PRODUCTION_API);
+      renderApiBaseStatus();
+      return api(path, options, false);
+    }
   }
 
   if (hadNetworkFailure) {
@@ -2230,6 +2273,7 @@ async function boot() {
   wireEvents();
   initGoogleAuth();
   try {
+    await ensureWorkingApiBase();
     await loadMapDefaults();
     await loadConfig();
     await loadLegalContent();
