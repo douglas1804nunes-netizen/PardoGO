@@ -56,6 +56,8 @@ const hasGeo = () => 'geolocation' in navigator;
 const hasLeaflet = () => Boolean(window.L && typeof window.L.map === 'function');
 const LOGIN_DEFAULT_STATUS = 'Informe seu telefone e senha para acessar.';
 const MOBILE_APP_CONFIG = window.PARDOGO_MOBILE_CONFIG || {};
+const IS_NATIVE_APP = Boolean(window.Capacitor && typeof window.Capacitor.getPlatform === 'function' && window.Capacitor.getPlatform() !== 'web');
+const ADMIN_WEB_ONLY = Boolean(MOBILE_APP_CONFIG.adminWebOnly);
 const ADMIN_MONITOR_TAB_TARGETS = ['adminPanel', 'securityPanel', 'passengerPanel', 'driverPanel', 'legalPanel', 'appPanel'];
 const MAIN_TAB_TARGETS = ['passengerPanel', 'driverPanel'];
 
@@ -97,6 +99,7 @@ function visibleTabTargetsForCurrentUser() {
   }
   if (!state.user) return [...MAIN_TAB_TARGETS];
   if (state.user.role === 'driver') return ['driverPanel'];
+  if (state.user.role === 'admin' && ADMIN_WEB_ONLY && IS_NATIVE_APP) return [];
   if (state.user.role === 'admin') return ['adminPanel', 'securityPanel'];
   return ['passengerPanel'];
 }
@@ -691,6 +694,11 @@ function renderSession() {
   if (MOBILE_APP_CONFIG.adminOnlyApk && state.user && state.user.role !== 'admin') {
     toast('Este APK e exclusivo do administrador.', 'error');
     doLogout('Acesso permitido somente para administrador.').catch(() => {});
+    return;
+  }
+  if (ADMIN_WEB_ONLY && IS_NATIVE_APP && state.user?.role === 'admin') {
+    toast('Acesso admin disponivel somente no PC/web.', 'error');
+    doLogout('Use o painel no PC para administrar.').catch(() => {});
     return;
   }
   updateMainTabsVisibility();
@@ -1558,6 +1566,8 @@ function wireEvents() {
     $('#openRegisterBtn')?.classList.add('hidden');
     $('#registerPanel')?.classList.add('hidden');
     setFormStatus('#loginStatus', 'APK exclusivo do administrador. Use o login admin.', 'warn');
+  } else if (ADMIN_WEB_ONLY && IS_NATIVE_APP) {
+    setFormStatus('#loginStatus', 'App mobile para passageiro/motorista. Admin usa painel no PC.', 'warn');
   }
 
   wirePhoneInput('#loginForm input[name="phone"]', true);
@@ -1645,6 +1655,9 @@ function wireEvents() {
       }
       if (MOBILE_APP_CONFIG.adminOnlyApk && data.user.role !== 'admin') {
         throw new Error('Este APK e exclusivo para administrador.');
+      }
+      if (ADMIN_WEB_ONLY && IS_NATIVE_APP && data.user.role === 'admin') {
+        throw new Error('Administrador deve acessar pelo PC/web.');
       }
       saveSession(data.token, data.user);
       setFormStatus('#loginStatus', data.message || `Login realizado. Perfil: ${roleLabel(data.user.role)}.`, 'ok');

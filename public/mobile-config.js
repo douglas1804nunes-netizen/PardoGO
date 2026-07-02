@@ -4,7 +4,8 @@ window.PARDOGO_MOBILE_CONFIG = {
   apiBaseUrl: 'https://pardogo-8yn0.onrender.com',
   appStage: 'production',
   enableApiSetupScreen: false,
-  adminOnlyApk: true,
+  adminOnlyApk: false,
+  adminWebOnly: true,
   googleClientId: '',
   autoSelectProfile: true,
   profiles: {
