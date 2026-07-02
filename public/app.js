@@ -163,7 +163,7 @@ function toast(message, type = '') {
   setTimeout(() => el.classList.add('hidden'), 4200);
 }
 
-async function api(path, options = {}) {
+async function api(path, options = {}, retryWithOfficial = true) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   const base = normalizedApiBase();
@@ -180,15 +180,21 @@ async function api(path, options = {}) {
   async function fetchCandidate(url) {
     const response = await fetch(url, { ...options, headers });
     const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-    const isJson = contentType.includes('application/json');
+    const declaredJson = contentType.includes('application/json');
     let data = null;
     let text = '';
-    if (isJson) {
+    if (declaredJson) {
       data = await response.json();
     } else {
       text = await response.text();
+      const trimmed = text.trim();
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try {
+          data = JSON.parse(trimmed);
+        } catch {}
+      }
     }
-    return { url, response, isJson, data, text };
+    return { url, response, isJson: Boolean(data), data, text };
   }
 
   const candidates = [primaryUrl, ...fallbacks.filter(url => url !== primaryUrl)];
@@ -227,7 +233,13 @@ async function api(path, options = {}) {
   const hadNonJsonResponse = attempts.some(item => item.response && !item.isJson);
 
   if (hadNonJsonResponse) {
-    throw new Error('A URL da API respondeu com conteúdo inválido (não JSON). Abra a aba App, limpe a URL da API e tente novamente.');
+    if (retryWithOfficial && base && base !== OFFICIAL_PRODUCTION_API) {
+      state.apiBaseUrl = OFFICIAL_PRODUCTION_API;
+      localStorage.setItem('pardogo_api_base', OFFICIAL_PRODUCTION_API);
+      renderApiBaseStatus();
+      return api(path, options, false);
+    }
+    throw new Error('A API respondeu com conteúdo inválido. A URL foi atualizada automaticamente para a oficial. Tente novamente.');
   }
 
   if (hadNetworkFailure) {
