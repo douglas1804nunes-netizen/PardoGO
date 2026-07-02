@@ -461,10 +461,31 @@ h2 { margin: 0 0 12px; letter-spacing: -.03em; color: #0f172a; }
 body.is-logged-in #authShell { display: none; }
 body.is-logged-in #registerPanel { display: none !important; }
 body.is-logged-in #loggedCard { display: flex !important; }
+body.is-logged-in .hero { display: none; }
+body.is-logged-in .container { padding-top: 24px; }
+body.is-logged-in .logged-card { margin: 0 0 24px; }
 body:not(.is-logged-in) #loggedCard { display: none !important; }
 body:not(.is-logged-in) .tabs,
 body:not(.is-logged-in) .panel { display: none !important; }
 body:not(.is-logged-in) .session { display: none; }
+
+.pix-qr-box {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid #dbeaf2;
+  background: linear-gradient(180deg, #f8fdff, #f1f9ff);
+}
+
+.pix-qr-image {
+  width: 220px;
+  max-width: 100%;
+  border-radius: 14px;
+  border: 1px solid #d7e6ef;
+  background: #fff;
+  padding: 8px;
+  margin: 8px 0;
+}
 
 /* FORM */
 .form { display: grid; gap: 13px; }

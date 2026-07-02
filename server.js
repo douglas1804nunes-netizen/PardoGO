@@ -44,13 +44,17 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX || 300);
 const rateLimitBuckets = new Map();
-const MAP_DEFAULT_CENTER = { lat: -21.302, lng: -52.833, label: 'Santa Rita do Rio Pardo - MS' };
+const MAP_DEFAULT_CENTER = { lat: -21.302, lng: -52.833, label: 'Santa Rita do Pardo - MS' };
 const CITY_GEOFENCE_RADIUS_KM = Number(process.env.CITY_GEOFENCE_RADIUS_KM || 55);
 const CITY_AVERAGE_SPEED_KMH = Number(process.env.CITY_AVERAGE_SPEED_KMH || 28);
 const MAP_TIMEOUT_MS = Number(process.env.MAP_TIMEOUT_MS || 5500);
 const eventClients = new Map();
 const SSE_PING_MS = Number(process.env.SSE_PING_MS || 25000);
 const PAYMENT_METHODS = ['Pix', 'Dinheiro', 'Saldo do app'];
+const PIX_KEY = String(process.env.PIX_KEY || ADMIN_INITIAL_PHONE || '').trim();
+const PIX_MERCHANT_NAME = String(process.env.PIX_MERCHANT_NAME || 'PARDOGO').trim();
+const PIX_MERCHANT_CITY = String(process.env.PIX_MERCHANT_CITY || 'SANTA RITA DO PARDO').trim();
+const PIX_DESCRIPTION = String(process.env.PIX_DESCRIPTION || 'RECARGA PARDOGO').trim();
 
 const defaultTariffRules = {
   base: 5,
@@ -58,7 +62,7 @@ const defaultTariffRules = {
   perMin: 0.45,
   min: 12,
   driverSharePercent: 80,
-  city: 'Santa Rita do Rio Pardo - MS'
+  city: 'Santa Rita do Pardo - MS'
 };
 
 let db;
@@ -179,6 +183,28 @@ function migrate() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_wallet_transactions_user_created ON wallet_transactions(user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS pix_topups (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      amount REAL NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'awaiting_confirmation', 'confirmed', 'rejected', 'expired')),
+      pix_key TEXT NOT NULL,
+      pix_payload TEXT NOT NULL,
+      qr_code_url TEXT NOT NULL,
+      txid TEXT NOT NULL,
+      payer_note TEXT DEFAULT '',
+      admin_note TEXT DEFAULT '',
+      confirmed_by TEXT,
+      confirmed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id),
+      FOREIGN KEY(confirmed_by) REFERENCES users(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pix_topups_user_created ON pix_topups(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_pix_topups_status_created ON pix_topups(status, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS ride_contacts (
       id TEXT PRIMARY KEY,
@@ -697,7 +723,155 @@ function getWalletTransactions(userId, limit = 20) {
   return db.prepare('SELECT * FROM wallet_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT ?').all(userId, Number(limit || 20));
 }
 
-function topupWallet(userId, amount, method = 'Pix') {
+function walletReferenceExists(referenceId) {
+  if (!referenceId) return false;
+  const row = db.prepare('SELECT id FROM wallet_transactions WHERE reference_id = ? LIMIT 1').get(String(referenceId));
+  return Boolean(row?.id);
+}
+
+function sanitizePixName(value, max = 25) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max) || 'PARDOGO';
+}
+
+function emvField(id, value) {
+  const text = String(value || '');
+  return `${id}${String(text.length).padStart(2, '0')}${text}`;
+}
+
+function crc16(payload) {
+  let crc = 0xFFFF;
+  for (let i = 0; i < payload.length; i += 1) {
+    crc ^= payload.charCodeAt(i) << 8;
+    for (let bit = 0; bit < 8; bit += 1) {
+      if ((crc & 0x8000) !== 0) crc = (crc << 1) ^ 0x1021;
+      else crc <<= 1;
+      crc &= 0xFFFF;
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+}
+
+function generatePixPayload({ amount, txid }) {
+  if (!PIX_KEY) throw new Error('PIX_KEY não configurada para gerar cobrança PIX.');
+  const value = Number(Number(amount || 0).toFixed(2));
+  if (!Number.isFinite(value) || value <= 0) throw new Error('Valor PIX inválido.');
+
+  const merchantAccount = `${emvField('00', 'br.gov.bcb.pix')}${emvField('01', PIX_KEY)}${PIX_DESCRIPTION ? emvField('02', String(PIX_DESCRIPTION).slice(0, 99)) : ''}`;
+  const payloadWithoutCrc = [
+    emvField('00', '01'),
+    emvField('26', merchantAccount),
+    emvField('52', '0000'),
+    emvField('53', '986'),
+    emvField('54', value.toFixed(2)),
+    emvField('58', 'BR'),
+    emvField('59', sanitizePixName(PIX_MERCHANT_NAME, 25)),
+    emvField('60', sanitizePixName(PIX_MERCHANT_CITY, 15)),
+    emvField('62', emvField('05', String(txid || 'TOPUP').slice(0, 25)))
+  ].join('');
+
+  const withCrcHeader = `${payloadWithoutCrc}6304`;
+  return `${withCrcHeader}${crc16(withCrcHeader)}`;
+}
+
+function rowToPixTopup(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    amount: Number(Number(row.amount || 0).toFixed(2)),
+    status: row.status,
+    pixKey: row.pix_key,
+    pixPayload: row.pix_payload,
+    qrCodeUrl: row.qr_code_url,
+    txid: row.txid,
+    payerNote: row.payer_note || '',
+    adminNote: row.admin_note || '',
+    confirmedBy: row.confirmed_by || null,
+    confirmedAt: row.confirmed_at || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function createPixTopupRequest(userId, amount) {
+  const value = Number(Number(amount || 0).toFixed(2));
+  if (!Number.isFinite(value) || value <= 0) throw new Error('Informe um valor de recarga válido.');
+  const now = nowIso();
+  const id = crypto.randomUUID();
+  const txid = `PG${Date.now().toString(36).toUpperCase()}${Math.floor(Math.random() * 99).toString().padStart(2, '0')}`.slice(0, 25);
+  const pixPayload = generatePixPayload({ amount: value, txid });
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(pixPayload)}`;
+  db.prepare(`
+    INSERT INTO pix_topups (id, user_id, amount, status, pix_key, pix_payload, qr_code_url, txid, payer_note, admin_note, confirmed_by, confirmed_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, userId, value, 'pending', PIX_KEY, pixPayload, qrCodeUrl, txid, '', '', null, null, now, now);
+  return rowToPixTopup(db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(id));
+}
+
+function listPixTopupsByUser(userId, limit = 20) {
+  return db.prepare(`
+    SELECT * FROM pix_topups
+    WHERE user_id = ? AND status IN ('pending', 'awaiting_confirmation')
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(userId, Number(limit || 20)).map(rowToPixTopup);
+}
+
+function listPendingPixTopupsForAdmin(limit = 200) {
+  return db.prepare(`
+    SELECT p.*, u.name AS user_name, u.phone AS user_phone
+    FROM pix_topups p
+    JOIN users u ON u.id = p.user_id
+    WHERE p.status IN ('pending', 'awaiting_confirmation')
+    ORDER BY p.created_at ASC
+    LIMIT ?
+  `).all(Number(limit || 200)).map(row => ({
+    ...rowToPixTopup(row),
+    userName: row.user_name,
+    userPhone: row.user_phone
+  }));
+}
+
+function markPixTopupPaidByUser(topupId, userId) {
+  const topup = db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(String(topupId || ''));
+  if (!topup || topup.user_id !== userId) return null;
+  if (!['pending', 'awaiting_confirmation'].includes(topup.status)) return rowToPixTopup(topup);
+  const updatedAt = nowIso();
+  db.prepare('UPDATE pix_topups SET status = ?, updated_at = ? WHERE id = ?').run('awaiting_confirmation', updatedAt, topup.id);
+  return rowToPixTopup(db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(topup.id));
+}
+
+function confirmPixTopupByAdmin(topupId, adminUserId, approve = true, adminNote = '') {
+  const topup = db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(String(topupId || ''));
+  if (!topup) return null;
+  if (topup.status === 'confirmed' || topup.status === 'rejected') return rowToPixTopup(topup);
+
+  const now = nowIso();
+  const nextStatus = approve ? 'confirmed' : 'rejected';
+  db.prepare(`
+    UPDATE pix_topups
+    SET status = ?, admin_note = ?, confirmed_by = ?, confirmed_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(nextStatus, String(adminNote || '').slice(0, 200), adminUserId, now, now, topup.id);
+
+  if (approve && !walletReferenceExists(topup.id)) {
+    topupWallet(topup.user_id, Number(topup.amount || 0), 'Pix', {
+      referenceId: topup.id,
+      description: 'Recarga PIX confirmada'
+    });
+  }
+
+  return rowToPixTopup(db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(topup.id));
+}
+
+function topupWallet(userId, amount, method = 'Pix', options = {}) {
   const value = Number(Number(amount || 0).toFixed(2));
   if (!Number.isFinite(value) || value <= 0) throw new Error('Informe um valor válido para recarga.');
   const current = getWalletBalance(userId);
@@ -708,7 +882,8 @@ function topupWallet(userId, amount, method = 'Pix') {
     type: 'credit',
     amount: value,
     method,
-    description: 'Recarga de saldo no aplicativo'
+    description: String(options.description || 'Recarga de saldo no aplicativo'),
+    referenceId: options.referenceId || null
   });
   return next;
 }
@@ -1246,7 +1421,7 @@ function isWithinAllowedCity(lat, lng) {
 function assertCoordsWithinAllowedCity(origin, destination) {
   if (!origin || !destination) return;
   if (!isWithinAllowedCity(origin.lat, origin.lng) || !isWithinAllowedCity(destination.lat, destination.lng)) {
-    const error = new Error('Atendimento restrito a Santa Rita do Rio Pardo - MS. Ajuste origem e destino dentro da cidade.');
+    const error = new Error('Atendimento restrito a Santa Rita do Pardo - MS. Ajuste origem e destino dentro da cidade.');
     error.statusCode = 400;
     throw error;
   }
@@ -1296,7 +1471,7 @@ async function fetchJsonWithTimeout(url, timeoutMs = MAP_TIMEOUT_MS) {
 async function geocodeAddress(query) {
   const term = String(query || '').trim();
   if (!term) return [];
-  const expanded = /santa rita/i.test(term) ? term : `${term}, Santa Rita do Rio Pardo, Mato Grosso do Sul, Brasil`;
+  const expanded = /santa rita/i.test(term) ? term : `${term}, Santa Rita do Pardo, Mato Grosso do Sul, Brasil`;
   const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&addressdetails=1&countrycodes=br&q=${encodeURIComponent(expanded)}`;
   const results = await fetchJsonWithTimeout(url).catch(() => []);
   return results
@@ -1406,6 +1581,7 @@ function stats() {
     lowRatedDrivers: db.prepare("SELECT COUNT(*) AS count FROM (SELECT driver_id, AVG(rating) AS avg_rating, COUNT(*) AS qty FROM ride_ratings GROUP BY driver_id HAVING qty >= 3 AND avg_rating < 3.5)").get().count,
     supportOpen: db.prepare("SELECT COUNT(*) AS count FROM support_tickets WHERE status != 'closed'").get().count,
     reportsOpen: db.prepare("SELECT COUNT(*) AS count FROM ride_reports WHERE status != 'resolved'").get().count,
+    pixPending: db.prepare("SELECT COUNT(*) AS count FROM pix_topups WHERE status IN ('pending', 'awaiting_confirmation')").get().count,
     driverDocsPending: db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'driver' AND document_status IN ('not_sent', 'pending_review')").get().count,
     totalRevenue: Number(Number(totalRevenue).toFixed(2)),
     estimatedPlatformCommission: Number(commission.toFixed(2))
@@ -1838,7 +2014,8 @@ async function handleApi(req, res, url) {
       return send(res, 200, {
         ok: true,
         balance: getWalletBalance(user.id),
-        transactions: getWalletTransactions(user.id, 30)
+        transactions: getWalletTransactions(user.id, 30),
+        pixTopupsPending: listPixTopupsByUser(user.id, 20)
       });
     }
 
@@ -1854,13 +2031,42 @@ async function handleApi(req, res, url) {
       if (!methodLabel || methodLabel === 'Saldo do app') {
         return send(res, 400, { ok: false, error: 'Use Pix ou Dinheiro para recarregar o saldo.' });
       }
+      if (methodLabel === 'Pix') {
+        const pendingPix = createPixTopupRequest(user.id, amount);
+        audit(user.id, 'wallet_topup_pix_requested', 'wallet', user.id, { amount, pixTopupId: pendingPix.id });
+        return send(res, 202, {
+          ok: true,
+          pending: true,
+          message: `PIX de R$ ${Number(amount).toFixed(2)} gerado. O saldo será liberado após confirmação.`,
+          pendingPix,
+          pixTopupsPending: listPixTopupsByUser(user.id, 20),
+          balance: getWalletBalance(user.id),
+          transactions: getWalletTransactions(user.id, 20)
+        });
+      }
       const balance = topupWallet(user.id, amount, methodLabel);
       audit(user.id, 'wallet_topup', 'wallet', user.id, { amount, method: methodLabel, balance });
       return send(res, 201, {
         ok: true,
         message: `Recarga de R$ ${Number(amount).toFixed(2)} realizada com sucesso.`,
         balance,
-        transactions: getWalletTransactions(user.id, 20)
+        transactions: getWalletTransactions(user.id, 20),
+        pixTopupsPending: listPixTopupsByUser(user.id, 20)
+      });
+    }
+
+    const pixMarkPaidMatch = pathname.match(/^\/api\/wallet\/pix\/([^/]+)\/mark-paid$/);
+    if (method === 'PATCH' && pixMarkPaidMatch) {
+      const user = requireAuth(req, res, ['passenger', 'admin']);
+      if (!user) return;
+      const topup = markPixTopupPaidByUser(pixMarkPaidMatch[1], user.id);
+      if (!topup) return send(res, 404, { ok: false, error: 'Solicitação PIX não encontrada.' });
+      audit(user.id, 'wallet_topup_pix_mark_paid', 'wallet', user.id, { pixTopupId: topup.id, status: topup.status });
+      return send(res, 200, {
+        ok: true,
+        topup,
+        pixTopupsPending: listPixTopupsByUser(user.id, 20),
+        message: 'Pagamento PIX marcado para confirmação administrativa.'
       });
     }
 
@@ -1881,7 +2087,7 @@ async function handleApi(req, res, url) {
       if (!q.trim()) return send(res, 400, { ok: false, error: 'Informe o endereço para buscar.' });
       const results = await geocodeAddress(q);
       if (!results.length) {
-        return send(res, 400, { ok: false, error: 'Endereco fora de Santa Rita do Rio Pardo - MS. Busque um ponto dentro da cidade.' });
+        return send(res, 400, { ok: false, error: 'Endereco fora de Santa Rita do Pardo - MS. Busque um ponto dentro da cidade.' });
       }
       return send(res, 200, { ok: true, query: q, results, fallbackCenter: MAP_DEFAULT_CENTER });
     }
@@ -1893,11 +2099,11 @@ async function handleApi(req, res, url) {
         return send(res, 400, { ok: false, error: 'Latitude/longitude inválidas.' });
       }
       if (!isWithinAllowedCity(lat, lng)) {
-        return send(res, 400, { ok: false, error: 'Atendimento restrito a Santa Rita do Rio Pardo - MS.' });
+        return send(res, 400, { ok: false, error: 'Atendimento restrito a Santa Rita do Pardo - MS.' });
       }
       const result = await reverseGeocodeCoords(lat, lng);
       if (!result) {
-        return send(res, 400, { ok: false, error: 'Nao foi possivel validar este ponto dentro de Santa Rita do Rio Pardo - MS.' });
+        return send(res, 400, { ok: false, error: 'Nao foi possivel validar este ponto dentro de Santa Rita do Pardo - MS.' });
       }
       return send(res, 200, { ok: true, result });
     }
@@ -2061,6 +2267,9 @@ async function handleApi(req, res, url) {
       const lng = Number(body.lng);
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
         return send(res, 400, { ok: false, error: 'Latitude e longitude são obrigatórias.' });
+      }
+      if (!isWithinAllowedCity(lat, lng)) {
+        return send(res, 400, { ok: false, error: 'Localizacao fora de Santa Rita do Pardo - MS.' });
       }
       const updatedAt = nowIso();
       db.prepare(`
@@ -2231,10 +2440,34 @@ async function handleApi(req, res, url) {
         tariffRules: getTariffRules(),
         users: getAllUsers().map(publicUser),
         rides: getAllRides(),
+        pixTopupsPending: listPendingPixTopupsForAdmin(200),
         supportTickets: getSupportTickets(),
         rideReports: getRideReports(),
         legal: getLegalContent(),
         database: { type: 'SQLite', path: 'data/pardogo.sqlite' }
+      });
+    }
+
+    if (method === 'GET' && pathname === '/api/admin/wallet/pix-pending') {
+      const user = requireAuth(req, res, ['admin']);
+      if (!user) return;
+      return send(res, 200, { ok: true, pixTopupsPending: listPendingPixTopupsForAdmin(500) });
+    }
+
+    const adminPixConfirmMatch = pathname.match(/^\/api\/admin\/wallet\/pix\/([^/]+)\/confirm$/);
+    if (method === 'PATCH' && adminPixConfirmMatch) {
+      const user = requireAuth(req, res, ['admin']);
+      if (!user) return;
+      const body = await parseBody(req);
+      const approve = !(body.approve === false || body.approve === 'false' || body.action === 'reject');
+      const topup = confirmPixTopupByAdmin(adminPixConfirmMatch[1], user.id, approve, body.note || '');
+      if (!topup) return send(res, 404, { ok: false, error: 'Solicitação PIX não encontrada.' });
+      audit(user.id, approve ? 'wallet_topup_pix_confirmed' : 'wallet_topup_pix_rejected', 'wallet', topup.userId, { pixTopupId: topup.id, amount: topup.amount });
+      return send(res, 200, {
+        ok: true,
+        topup,
+        pixTopupsPending: listPendingPixTopupsForAdmin(500),
+        message: approve ? 'PIX confirmado e saldo liberado.' : 'Solicitação PIX recusada.'
       });
     }
 

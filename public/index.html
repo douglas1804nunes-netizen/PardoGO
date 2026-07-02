@@ -229,7 +229,7 @@
 
         <article class="card protected" data-role="passenger admin">
           <h2>Saldo no aplicativo</h2>
-          <p class="muted">Recarregue seu saldo com Pix ou Dinheiro e pague corridas usando o crédito do app.</p>
+          <p class="muted">Recarregue com Pix via QR Code e aguarde confirmação para liberar o saldo no app.</p>
           <div class="fare-box wallet-box">
             <span>Saldo disponível</span>
             <strong id="walletBalance">R$ 0,00</strong>
@@ -247,8 +247,22 @@
               </label>
             </div>
             <button type="submit" class="secondary">Adicionar crédito</button>
-            <small id="walletStatus" class="form-status muted">Seu saldo é atualizado imediatamente após a recarga.</small>
+            <small id="walletStatus" class="form-status muted">No Pix, o saldo só entra após confirmação do pagamento.</small>
           </form>
+          <div id="pixQrBox" class="pix-qr-box hidden">
+            <h3>Pagamento PIX</h3>
+            <p class="muted">Escaneie o QR Code e pague o valor escolhido. O saldo será liberado quando o PIX for confirmado.</p>
+            <img id="pixQrImage" alt="QR Code PIX" class="pix-qr-image" />
+            <label>Copia e cola PIX
+              <textarea id="pixPayloadText" rows="3" readonly></textarea>
+            </label>
+            <div class="item-actions">
+              <button type="button" class="small" id="pixCopyBtn">Copiar código PIX</button>
+              <button type="button" class="small ok" id="pixMarkPaidBtn">Já paguei no PIX</button>
+            </div>
+          </div>
+          <h3>Recargas PIX pendentes</h3>
+          <div id="walletPixPending" class="list empty">Nenhuma recarga PIX pendente.</div>
           <h3>Extrato recente</h3>
           <div id="walletTransactions" class="list empty">Sem movimentações no momento.</div>
         </article>
@@ -338,6 +352,11 @@
           <article class="card">
             <h2>Todas as corridas</h2>
             <div id="adminRides" class="list"></div>
+          </article>
+          <article class="card">
+            <h2>Confirmações PIX pendentes</h2>
+            <p class="muted">Confirme ou recuse recargas PIX para liberar saldo no app.</p>
+            <div id="adminPixTopupsList" class="list empty">Nenhuma recarga PIX pendente.</div>
           </article>
         </div>
         <div class="grid two">

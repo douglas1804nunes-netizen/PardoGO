@@ -34,7 +34,7 @@ const state = {
   driverRouteLayer: null,
   driverRides: [],
   selectedDriverRideId: null,
-  defaultCenter: { lat: -21.302, lng: -52.833, label: 'Santa Rita do Rio Pardo - MS' },
+  defaultCenter: { lat: -21.302, lng: -52.833, label: 'Santa Rita do Pardo - MS' },
   eventSource: null,
   realtimeConnected: false,
   realtimeLastEventAt: null,
@@ -44,7 +44,9 @@ const state = {
     origin: [],
     destination: []
   },
-  routeAutoTimer: null
+  routeAutoTimer: null,
+  walletPixPending: [],
+  walletPixCurrentId: ''
 };
 
 const $ = selector => document.querySelector(selector);
@@ -474,6 +476,66 @@ function renderWalletTransactions(transactions = []) {
   box.innerHTML = transactions.slice(0, 10).map(walletTransactionItem).join('');
 }
 
+function pixStatusLabel(status) {
+  return {
+    pending: 'Aguardando pagamento',
+    awaiting_confirmation: 'Aguardando confirmação',
+    confirmed: 'Confirmado',
+    rejected: 'Recusado'
+  }[status] || status;
+}
+
+function walletPixPendingItem(item) {
+  const badgeClass = item.status === 'awaiting_confirmation' ? 'warn' : 'ok';
+  return `
+    <div class="item wallet-tx-item">
+      <header>
+        <div>
+          <strong>PIX ${money(item.amount || 0)}</strong>
+          <small>${dateFmt(item.createdAt)} • ${pixStatusLabel(item.status)}</small>
+          <small>TXID: ${item.txid || '-'}</small>
+        </div>
+        <span class="badge ${badgeClass}">${pixStatusLabel(item.status)}</span>
+      </header>
+      <div class="item-actions">
+        <button class="small" data-pix-show="${item.id}">Ver QR</button>
+        <button class="small ok" data-pix-mark-paid="${item.id}">Já paguei</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderWalletPixPending(items = []) {
+  state.walletPixPending = Array.isArray(items) ? items : [];
+  const box = $('#walletPixPending');
+  if (!box) return;
+  if (!state.walletPixPending.length) {
+    state.walletPixCurrentId = '';
+    hidePixQr();
+    box.innerHTML = '<div class="empty">Nenhuma recarga PIX pendente.</div>';
+    return;
+  }
+  box.innerHTML = state.walletPixPending.map(walletPixPendingItem).join('');
+}
+
+function showPixQr(item) {
+  if (!item) return;
+  state.walletPixCurrentId = item.id;
+  const wrap = $('#pixQrBox');
+  const img = $('#pixQrImage');
+  const text = $('#pixPayloadText');
+  if (!wrap || !img || !text) return;
+  img.src = item.qrCodeUrl || '';
+  text.value = item.pixPayload || '';
+  wrap.classList.remove('hidden');
+}
+
+function hidePixQr() {
+  const wrap = $('#pixQrBox');
+  if (!wrap) return;
+  wrap.classList.add('hidden');
+}
+
 async function loadWallet() {
   if (!state.user || !['passenger', 'admin'].includes(state.user.role)) return;
   const data = await api('/api/wallet');
@@ -481,6 +543,7 @@ async function loadWallet() {
   localStorage.setItem('pardogo_user', JSON.stringify(state.user));
   renderWalletBalance();
   renderWalletTransactions(data.transactions || []);
+  renderWalletPixPending(data.pixTopupsPending || []);
 }
 
 function sanitizeText(value) {
@@ -778,7 +841,7 @@ function initMap() {
 
   state.markers.center = L.marker([state.defaultCenter.lat, state.defaultCenter.lng])
     .addTo(state.map)
-    .bindPopup(state.defaultCenter.label || 'Santa Rita do Rio Pardo - MS');
+    .bindPopup(state.defaultCenter.label || 'Santa Rita do Pardo - MS');
 
   state.map.on('click', event => {
     const form = $('#rideForm');
@@ -1348,6 +1411,7 @@ async function loadAdminDashboard() {
   $('#driversList').innerHTML = drivers.length ? drivers.map(driverItem).join('') : '<div class="empty">Nenhum motorista cadastrado.</div>';
   $('#passengersList').innerHTML = passengers.length ? passengers.map(passengerItem).join('') : '<div class="empty">Nenhum passageiro cadastrado.</div>';
   $('#adminRides').innerHTML = data.rides.length ? data.rides.map(r => rideItem(r, { admin: true })).join('') : '<div class="empty">Nenhuma corrida cadastrada.</div>';
+  renderAdminPixTopups(data.pixTopupsPending || []);
   $('#adminSupportList').innerHTML = data.supportTickets?.length ? data.supportTickets.map(supportItem).join('') : '<div class="empty">Nenhum chamado aberto.</div>';
   $('#adminReportsList').innerHTML = data.rideReports?.length ? data.rideReports.map(reportItem).join('') : '<div class="empty">Nenhuma denúncia registrada.</div>';
   $('#exportLink').onclick = async e => {
@@ -1409,6 +1473,7 @@ function renderMetrics(stats) {
     ['Motoristas em atenção', stats.lowRatedDrivers],
     ['Chamados abertos', stats.supportOpen],
     ['Denúncias abertas', stats.reportsOpen],
+    ['PIX pendentes', stats.pixPending],
     ['Docs pendentes', stats.driverDocsPending]
   ];
   $('#adminMetrics').innerHTML = metrics.map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`).join('');
@@ -1494,6 +1559,32 @@ function reportItem(report) {
       ${report.adminNote ? `<small>Admin: ${report.adminNote}</small>` : ''}
     </div>
   `;
+}
+
+function adminPixTopupItem(item) {
+  const statusClass = item.status === 'awaiting_confirmation' ? 'warn' : 'ok';
+  return `
+    <div class="item">
+      <header>
+        <div>
+          <strong>${item.userName || 'Usuário'} • ${money(item.amount || 0)}</strong>
+          <small>${item.userPhone || '-'} • ${dateFmt(item.createdAt)} • ${pixStatusLabel(item.status)}</small><br>
+          <small>TXID: ${item.txid || '-'}</small>
+        </div>
+        <span class="badge ${statusClass}">${pixStatusLabel(item.status)}</span>
+      </header>
+      <div class="item-actions">
+        <button class="small ok" data-admin-pix-confirm="${item.id}">Confirmar PIX</button>
+        <button class="small bad" data-admin-pix-reject="${item.id}">Recusar</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderAdminPixTopups(items = []) {
+  const box = $('#adminPixTopupsList');
+  if (!box) return;
+  box.innerHTML = items.length ? items.map(adminPixTopupItem).join('') : '<div class="empty">Nenhuma recarga PIX pendente.</div>';
 }
 
 async function loadSecurityData() {
@@ -1587,6 +1678,30 @@ function wireEvents() {
   $('#clearApiBaseBtn')?.addEventListener('click', () => {
     setApiBaseUrl('');
     toast('App configurado para usar API local/mesmo domínio.', 'ok');
+  });
+
+  $('#pixCopyBtn')?.addEventListener('click', async () => {
+    const payload = String($('#pixPayloadText')?.value || '').trim();
+    if (!payload) return toast('Nenhum código PIX disponível.', 'error');
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(payload);
+      else throw new Error('clipboard-unavailable');
+      toast('Código PIX copiado.', 'ok');
+    } catch {
+      toast('Não foi possível copiar automaticamente. Copie o código manualmente.', 'error');
+    }
+  });
+
+  $('#pixMarkPaidBtn')?.addEventListener('click', async () => {
+    if (!state.walletPixCurrentId) return toast('Selecione uma recarga PIX pendente.', 'error');
+    try {
+      const data = await api(`/api/wallet/pix/${state.walletPixCurrentId}/mark-paid`, { method: 'PATCH' });
+      renderWalletPixPending(data.pixTopupsPending || []);
+      setFormStatus('#walletStatus', data.message || 'Pagamento PIX enviado para confirmação.', 'ok');
+      toast('Pagamento enviado para confirmação.', 'ok');
+    } catch (error) {
+      toast(error.message, 'error');
+    }
   });
 
   $('#approveAllDriversBtn')?.addEventListener('click', async () => {
@@ -1770,13 +1885,23 @@ function wireEvents() {
     try {
       body.amount = Number(body.amount || 0);
       const data = await api('/api/wallet/topup', { method: 'POST', body: JSON.stringify(body) });
-      state.user.walletBalance = Number(data.balance || 0);
+      state.user.walletBalance = Number(data.balance || state.user.walletBalance || 0);
       localStorage.setItem('pardogo_user', JSON.stringify(state.user));
       renderWalletBalance();
-      setFormStatus('#walletStatus', data.message || 'Recarga concluída.', 'ok');
-      toast('Crédito adicionado com sucesso.', 'ok');
-      form.reset();
-      form.elements.amount.value = '20';
+      renderWalletTransactions(data.transactions || []);
+      renderWalletPixPending(data.pixTopupsPending || []);
+
+      if (data.pending && data.pendingPix) {
+        showPixQr(data.pendingPix);
+        setFormStatus('#walletStatus', data.message || 'PIX gerado. Aguarde confirmação para liberar saldo.', 'warn');
+        toast('QR Code PIX gerado com sucesso.', 'ok');
+      } else {
+        hidePixQr();
+        setFormStatus('#walletStatus', data.message || 'Recarga concluída.', 'ok');
+        toast('Crédito adicionado com sucesso.', 'ok');
+      }
+
+      form.elements.amount.value = String(body.amount || 20);
     } catch (error) {
       setFormStatus('#walletStatus', error.message, 'error');
       toast(error.message, 'error');
@@ -1842,6 +1967,58 @@ function wireEvents() {
     const tab = event.target.closest('.tab');
     if (tab) {
       activateTab(tab.dataset.target);
+      return;
+    }
+
+    const pixShow = event.target.closest('[data-pix-show]');
+    if (pixShow) {
+      const selected = state.walletPixPending.find(item => item.id === pixShow.dataset.pixShow);
+      if (!selected) return toast('Recarga PIX não encontrada.', 'error');
+      showPixQr(selected);
+      return;
+    }
+
+    const pixMarkPaid = event.target.closest('[data-pix-mark-paid]');
+    if (pixMarkPaid) {
+      try {
+        const data = await api(`/api/wallet/pix/${pixMarkPaid.dataset.pixMarkPaid}/mark-paid`, { method: 'PATCH' });
+        renderWalletPixPending(data.pixTopupsPending || []);
+        setFormStatus('#walletStatus', data.message || 'Pagamento PIX enviado para confirmação.', 'ok');
+        toast('Pagamento enviado para confirmação.', 'ok');
+      } catch (error) {
+        toast(error.message, 'error');
+      }
+      return;
+    }
+
+    const adminPixConfirm = event.target.closest('[data-admin-pix-confirm]');
+    if (adminPixConfirm) {
+      try {
+        await api(`/api/admin/wallet/pix/${adminPixConfirm.dataset.adminPixConfirm}/confirm`, {
+          method: 'PATCH',
+          body: JSON.stringify({ approve: true })
+        });
+        toast('PIX confirmado. Saldo liberado para o usuário.', 'ok');
+        await loadAdminDashboard();
+      } catch (error) {
+        toast(error.message, 'error');
+      }
+      return;
+    }
+
+    const adminPixReject = event.target.closest('[data-admin-pix-reject]');
+    if (adminPixReject) {
+      const note = prompt('Motivo da recusa do PIX:', 'Comprovante não identificado') || '';
+      try {
+        await api(`/api/admin/wallet/pix/${adminPixReject.dataset.adminPixReject}/confirm`, {
+          method: 'PATCH',
+          body: JSON.stringify({ approve: false, note })
+        });
+        toast('Solicitação PIX recusada.', 'ok');
+        await loadAdminDashboard();
+      } catch (error) {
+        toast(error.message, 'error');
+      }
       return;
     }
 
