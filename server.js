@@ -855,17 +855,24 @@ function confirmPixTopupByAdmin(topupId, adminUserId, approve = true, adminNote 
 
   const now = nowIso();
   const nextStatus = approve ? 'confirmed' : 'rejected';
-  db.prepare(`
-    UPDATE pix_topups
-    SET status = ?, admin_note = ?, confirmed_by = ?, confirmed_at = ?, updated_at = ?
-    WHERE id = ?
-  `).run(nextStatus, String(adminNote || '').slice(0, 200), adminUserId, now, now, topup.id);
+  db.exec('BEGIN');
+  try {
+    db.prepare(`
+      UPDATE pix_topups
+      SET status = ?, admin_note = ?, confirmed_by = ?, confirmed_at = ?, updated_at = ?
+      WHERE id = ?
+    `).run(nextStatus, String(adminNote || '').slice(0, 200), adminUserId, now, now, topup.id);
 
-  if (approve && !walletReferenceExists(topup.id)) {
-    topupWallet(topup.user_id, Number(topup.amount || 0), 'Pix', {
-      referenceId: topup.id,
-      description: 'Recarga PIX confirmada'
-    });
+    if (approve && !walletReferenceExists(topup.id)) {
+      topupWallet(topup.user_id, Number(topup.amount || 0), 'Pix', {
+        referenceId: topup.id,
+        description: 'Recarga PIX confirmada'
+      });
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
   }
 
   return rowToPixTopup(db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(topup.id));
@@ -2290,10 +2297,12 @@ async function handleApi(req, res, url) {
       if (!requireApprovedDriver(user, res)) return;
       const ride = getRideById(acceptMatch[1]);
       if (!ride) return send(res, 404, { ok: false, error: 'Corrida não encontrada.' });
-      if (ride.status !== 'pending') return send(res, 409, { ok: false, error: 'Essa corrida já foi aceita ou finalizada.' });
       const acceptedAt = nowIso();
-      db.prepare('UPDATE rides SET status = ?, driver_id = ?, driver_name = ?, driver_phone = ?, accepted_at = ? WHERE id = ?')
-        .run('accepted', user.id, user.name, user.phone, acceptedAt, ride.id);
+      const result = db.prepare('UPDATE rides SET status = ?, driver_id = ?, driver_name = ?, driver_phone = ?, accepted_at = ? WHERE id = ? AND status = ?')
+        .run('accepted', user.id, user.name, user.phone, acceptedAt, ride.id, 'pending');
+      if (!result.changes) {
+        return send(res, 409, { ok: false, error: 'Essa corrida já foi aceita ou finalizada.' });
+      }
       audit(user.id, 'accept_ride', 'ride', ride.id, { driverName: user.name });
       const updatedRide = getRideById(ride.id);
       emitRideEvent('accepted', updatedRide, { driver: publicUser(user) });
