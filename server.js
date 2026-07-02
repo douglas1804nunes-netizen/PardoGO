@@ -43,11 +43,21 @@ const REQUIRE_SECURE_ENV = process.env.REQUIRE_SECURE_ENV === '1';
 const APP_BASE_ORIGIN = (() => {
   try { return new URL(APP_BASE_URL).origin; } catch { return ''; }
 })();
-const CORS_ORIGIN = String(process.env.CORS_ORIGIN || APP_BASE_ORIGIN || '').trim();
+const DEFAULT_CORS_ORIGINS = [
+  APP_BASE_ORIGIN,
+  'https://pardogo-8yn0.onrender.com',
+  'https://pardogo.onrender.com'
+].filter((value, index, arr) => value && arr.indexOf(value) === index);
+const CORS_ORIGIN = String(process.env.CORS_ORIGIN || DEFAULT_CORS_ORIGINS.join(',') || APP_BASE_ORIGIN || '').trim();
 const CORS_ALLOW_ALL = CORS_ORIGIN === '*';
+const CORS_KNOWN_RENDER_ORIGINS = ['https://pardogo-8yn0.onrender.com', 'https://pardogo.onrender.com'];
 const CORS_ALLOWED_ORIGINS = CORS_ALLOW_ALL
   ? ['*']
-  : CORS_ORIGIN.split(',').map(item => item.trim()).filter(Boolean);
+  : Array.from(new Set([
+    ...CORS_ORIGIN.split(',').map(item => item.trim()).filter(Boolean),
+    ...DEFAULT_CORS_ORIGINS,
+    ...CORS_KNOWN_RENDER_ORIGINS
+  ]));
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX || 300);
 const rateLimitBuckets = new Map();

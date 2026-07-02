@@ -1,5 +1,6 @@
 const OFFICIAL_PRODUCTION_API = 'https://pardogo-8yn0.onrender.com';
-const LEGACY_API_BASES = ['https://pardogo.onrender.com'];
+const KNOWN_PRODUCTION_APIS = ['https://pardogo-8yn0.onrender.com', 'https://pardogo.onrender.com'];
+const LEGACY_API_BASES = [];
 
 function normalizeKnownApiBase(value) {
   const base = String(value || '').trim().replace(/\/$/, '');
@@ -173,6 +174,10 @@ async function api(path, options = {}, retryWithOfficial = true) {
   if (base && OFFICIAL_PRODUCTION_API !== base) {
     fallbacks.push(`${OFFICIAL_PRODUCTION_API}${pathWithSlash}`);
   }
+  for (const prodBase of KNOWN_PRODUCTION_APIS) {
+    const url = `${prodBase}${pathWithSlash}`;
+    if (!fallbacks.includes(url)) fallbacks.push(url);
+  }
   if (base) {
     fallbacks.push(path);
   }
@@ -216,10 +221,16 @@ async function api(path, options = {}, retryWithOfficial = true) {
         throw apiError;
       }
 
-      if (candidate.startsWith('http') && OFFICIAL_PRODUCTION_API !== base && candidate.startsWith(OFFICIAL_PRODUCTION_API)) {
-        state.apiBaseUrl = OFFICIAL_PRODUCTION_API;
-        localStorage.setItem('pardogo_api_base', OFFICIAL_PRODUCTION_API);
-        renderApiBaseStatus();
+      if (candidate.startsWith('http')) {
+        const matchedBase = KNOWN_PRODUCTION_APIS.find(item => candidate.startsWith(item));
+        const resolvedBase = matchedBase || (() => {
+          try { return new URL(candidate).origin; } catch { return ''; }
+        })();
+        if (resolvedBase && resolvedBase !== normalizedApiBase()) {
+          state.apiBaseUrl = resolvedBase;
+          localStorage.setItem('pardogo_api_base', resolvedBase);
+          renderApiBaseStatus();
+        }
       }
 
       return result.data;
@@ -239,7 +250,7 @@ async function api(path, options = {}, retryWithOfficial = true) {
       renderApiBaseStatus();
       return api(path, options, false);
     }
-    throw new Error('A API respondeu com conteúdo inválido. A URL foi atualizada automaticamente para a oficial. Tente novamente.');
+    throw new Error('A API respondeu com conteúdo inválido em uma ou mais URLs. O app aplicou fallback automático para a URL válida.');
   }
 
   if (hadNetworkFailure) {
