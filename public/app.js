@@ -168,38 +168,74 @@ async function api(path, options = {}) {
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   const base = normalizedApiBase();
   const primaryUrl = apiUrl(path);
+  const pathWithSlash = path.startsWith('/') ? path : `/${path}`;
   const fallbacks = [];
   if (base && OFFICIAL_PRODUCTION_API !== base) {
-    fallbacks.push(`${OFFICIAL_PRODUCTION_API}${path.startsWith('/') ? path : `/${path}`}`);
+    fallbacks.push(`${OFFICIAL_PRODUCTION_API}${pathWithSlash}`);
   }
   if (base) {
     fallbacks.push(path);
   }
-  let response;
 
-  try {
-    response = await fetch(primaryUrl, { ...options, headers });
-  } catch (networkError) {
-    for (const fallbackUrl of fallbacks) {
-      try {
-        response = await fetch(fallbackUrl, { ...options, headers });
-        if (response) break;
-      } catch {}
+  async function fetchCandidate(url) {
+    const response = await fetch(url, { ...options, headers });
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    const isJson = contentType.includes('application/json');
+    let data = null;
+    let text = '';
+    if (isJson) {
+      data = await response.json();
+    } else {
+      text = await response.text();
     }
-    if (!response) {
-      const target = base || 'mesma origem';
-      throw new Error(`Falha de conexão com o servidor (${target}). Verifique internet, URL da API e se o backend está online.`);
+    return { url, response, isJson, data, text };
+  }
+
+  const candidates = [primaryUrl, ...fallbacks.filter(url => url !== primaryUrl)];
+  const attempts = [];
+
+  for (const candidate of candidates) {
+    try {
+      const result = await fetchCandidate(candidate);
+      attempts.push(result);
+
+      if (!result.isJson) {
+        // URL alcançável, mas sem API JSON (normalmente HTML de domínio errado).
+        continue;
+      }
+
+      if (!result.response.ok) {
+        const apiError = new Error(result.data?.error || result.data?.message || 'Erro na solicitação.');
+        apiError.isApiError = true;
+        throw apiError;
+      }
+
+      if (candidate.startsWith('http') && OFFICIAL_PRODUCTION_API !== base && candidate.startsWith(OFFICIAL_PRODUCTION_API)) {
+        state.apiBaseUrl = OFFICIAL_PRODUCTION_API;
+        localStorage.setItem('pardogo_api_base', OFFICIAL_PRODUCTION_API);
+        renderApiBaseStatus();
+      }
+
+      return result.data;
+    } catch (error) {
+      if (error?.isApiError) throw error;
+      attempts.push({ url: candidate, networkError: error });
     }
   }
 
-  const contentType = response.headers.get('content-type') || '';
-  const isJson = contentType.includes('application/json');
-  const data = isJson ? await response.json() : await response.text();
-  if (!isJson) {
-    throw new Error('Resposta inválida da API. Verifique a URL configurada no app e se o backend está online.');
+  const hadNetworkFailure = attempts.some(item => item.networkError);
+  const hadNonJsonResponse = attempts.some(item => item.response && !item.isJson);
+
+  if (hadNonJsonResponse) {
+    throw new Error('A URL da API respondeu com conteúdo inválido (não JSON). Abra a aba App, limpe a URL da API e tente novamente.');
   }
-  if (!response.ok) throw new Error(data.error || data.message || 'Erro na solicitação.');
-  return data;
+
+  if (hadNetworkFailure) {
+    const target = base || OFFICIAL_PRODUCTION_API || 'mesma origem';
+    throw new Error(`Falha de conexão com o servidor (${target}). Verifique internet, URL da API e se o backend está online.`);
+  }
+
+  throw new Error('Erro na comunicação com a API.');
 }
 
 function isValidUserPayload(user) {
