@@ -1,5 +1,5 @@
-const OFFICIAL_PRODUCTION_API = 'https://pardogo.onrender.com';
-const LEGACY_API_BASES = ['https://pardogo-8yn0.onrender.com'];
+const OFFICIAL_PRODUCTION_API = 'https://pardogo-8yn0.onrender.com';
+const LEGACY_API_BASES = ['https://pardogo.onrender.com'];
 
 function normalizeKnownApiBase(value) {
   const base = String(value || '').trim().replace(/\/$/, '');
