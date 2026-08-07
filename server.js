@@ -81,7 +81,9 @@ const CITY_GEOFENCE_RADIUS_KM = Number(process.env.CITY_GEOFENCE_RADIUS_KM || 55
 const CITY_AVERAGE_SPEED_KMH = Number(process.env.CITY_AVERAGE_SPEED_KMH || 28);
 const MAP_TIMEOUT_MS = Number(process.env.MAP_TIMEOUT_MS || 5500);
 const eventClients = new Map();
+const sseTickets = new Map();
 const SSE_PING_MS = Number(process.env.SSE_PING_MS || 25000);
+const SSE_TICKET_TTL_MS = Number(process.env.SSE_TICKET_TTL_MS || 60_000);
 const PAYMENT_METHODS = ['Pix', 'Dinheiro', 'Saldo do app'];
 const PIX_KEY = String(process.env.PIX_KEY || ADMIN_INITIAL_PHONE || '').trim();
 const PIX_MERCHANT_NAME = String(process.env.PIX_MERCHANT_NAME || 'PARDOGO').trim();
@@ -1153,7 +1155,10 @@ function securityHeaders(extra = {}, req = null) {
 
 function getClientIp(req) {
   if (TRUST_PROXY && req.headers['x-forwarded-for']) {
-    return String(req.headers['x-forwarded-for']).split(',')[0].trim();
+    const forwarded = String(req.headers['x-forwarded-for']).split(',').map(part => part.trim()).filter(Boolean);
+    const candidate = forwarded[0] || '';
+    // Aceita apenas IPv4/IPv6 esperados para evitar spoofing trivial do header.
+    if (/^[a-f0-9:.]+$/i.test(candidate)) return candidate;
   }
   return String(req.socket.remoteAddress || 'local');
 }
@@ -1222,10 +1227,42 @@ function validatePixWebhookAuth(req) {
   const headerSecret = String(req.headers['x-pix-webhook-secret'] || '').trim();
   const bearer = getBearerToken(req);
   const provided = headerSecret || bearer;
-  if (!provided || provided !== PIX_WEBHOOK_SECRET) {
+  if (!provided) {
+    return { ok: false, error: 'Webhook PIX sem autenticação válida.' };
+  }
+  const expectedBuffer = Buffer.from(PIX_WEBHOOK_SECRET, 'utf8');
+  const providedBuffer = Buffer.from(String(provided), 'utf8');
+  const secretMatches = expectedBuffer.length === providedBuffer.length
+    && crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+  if (!secretMatches) {
     return { ok: false, error: 'Webhook PIX sem autenticação válida.' };
   }
   return { ok: true };
+}
+
+function issueSseTicket(userId) {
+  const ticket = crypto.randomBytes(24).toString('base64url');
+  sseTickets.set(ticket, {
+    userId,
+    expiresAt: Date.now() + SSE_TICKET_TTL_MS
+  });
+  if (sseTickets.size > 3000) {
+    const now = Date.now();
+    for (const [key, entry] of sseTickets.entries()) {
+      if ((entry.expiresAt || 0) <= now) sseTickets.delete(key);
+    }
+  }
+  return ticket;
+}
+
+function consumeSseTicket(ticket) {
+  const raw = String(ticket || '').trim();
+  if (!raw) return null;
+  const entry = sseTickets.get(raw);
+  sseTickets.delete(raw);
+  if (!entry) return null;
+  if ((entry.expiresAt || 0) < Date.now()) return null;
+  return getUserById(entry.userId);
 }
 
 function isRateLimited(req) {
@@ -1428,8 +1465,9 @@ function writeSse(res, event, payload) {
 }
 
 function handleEvents(req, res, url) {
-  const token = url.searchParams.get('token') || getBearerToken(req);
-  const user = getAuthUserFromToken(token);
+  const ticketUser = consumeSseTicket(url.searchParams.get('ticket'));
+  const token = getBearerToken(req);
+  const user = ticketUser || getAuthUserFromToken(token);
   if (!user) return send(res, 401, { ok: false, error: 'Faça login para acompanhar em tempo real.' });
   if (user.status === 'blocked') return send(res, 403, { ok: false, error: 'Usuário bloqueado.' });
 
@@ -1997,6 +2035,17 @@ async function handleApi(req, res, url) {
         baseUrl: APP_BASE_URL,
         realtimeClients: eventClients.size,
         features: ['api', 'sqlite', 'secure-sessions', 'security-headers', 'rate-limit', 'production-healthcheck', 'deploy-ready', 'geolocation', 'leaflet-map', 'route-calculation', 'realtime-sse', 'ride-cancellation', 'ride-contact', 'ride-rating', 'quality-dashboard', 'support-tickets', 'safety-reports', 'driver-documents', 'legal-lgpd', 'pwa', 'capacitor-android', 'mobile-api-config', 'mobile-cors', 'wallet-credit']
+      });
+    }
+
+    if (method === 'POST' && pathname === '/api/events-ticket') {
+      const user = requireAuth(req, res, ['passenger', 'driver', 'admin']);
+      if (!user) return;
+      const ticket = issueSseTicket(user.id);
+      return send(res, 200, {
+        ok: true,
+        ticket,
+        expiresInMs: SSE_TICKET_TTL_MS
       });
     }
 
@@ -2789,12 +2838,12 @@ function createServer() {
   return http.createServer(async (req, res) => {
     res.req = req;
     const url = new URL(req.url, `http://${req.headers.host}`);
-    if (shouldRedirectCanonical(req)) {
-      res.writeHead(308, securityHeaders({ Location: canonicalRedirectLocation(req) }, req));
-      return res.end();
-    }
     if (req.method === 'OPTIONS') {
       res.writeHead(204, securityHeaders({}, req));
+      return res.end();
+    }
+    if (shouldRedirectCanonical(req)) {
+      res.writeHead(308, securityHeaders({ Location: canonicalRedirectLocation(req) }, req));
       return res.end();
     }
     if (shouldRedirectHttps(req)) {

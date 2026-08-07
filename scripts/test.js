@@ -28,10 +28,18 @@ async function request(pathname, options = {}) {
 }
 
 
-function openSse(token) {
+async function openSse(token) {
+  const ticketResp = await request('/api/events-ticket', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({})
+  });
+  const ticket = String(ticketResp.ticket || '').trim();
+  if (!ticket) throw new Error('Ticket SSE não retornado pela API.');
+
   const events = [];
   const listeners = [];
-  const req = http.get(`${BASE}/api/events?token=${encodeURIComponent(token)}`, {
+  const req = http.get(`${BASE}/api/events?ticket=${encodeURIComponent(ticket)}`, {
     headers: { Accept: 'text/event-stream' }
   });
   let buffer = '';
@@ -167,8 +175,8 @@ async function run() {
       body: JSON.stringify({ phone: '67911110000', password: testPassword })
     });
 
-    const driverStream = openSse(driverLogin.token);
-    const passengerStream = openSse(passengerLogin.token);
+    const driverStream = await openSse(driverLogin.token);
+    const passengerStream = await openSse(passengerLogin.token);
     await driverStream.waitFor('connected');
     await passengerStream.waitFor('connected');
 
