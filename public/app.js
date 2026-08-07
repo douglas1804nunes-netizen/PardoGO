@@ -325,7 +325,7 @@ function disconnectRealtime() {
   updateRealtimeStatus('Tempo real offline', false);
 }
 
-function connectRealtime() {
+async function connectRealtime() {
   if (!state.token || !window.EventSource) {
     disconnectRealtime();
     return;
@@ -333,7 +333,19 @@ function connectRealtime() {
   if (state.eventSource) state.eventSource.close();
 
   updateRealtimeStatus('Conectando tempo real...', false);
-  const url = apiUrl(`/api/events?token=${encodeURIComponent(state.token)}`);
+  let ticket = '';
+  try {
+    const ticketData = await api('/api/events-ticket', { method: 'POST' });
+    ticket = String(ticketData.ticket || '').trim();
+  } catch (error) {
+    console.warn('Falha ao gerar ticket SSE:', error);
+  }
+  if (!ticket) {
+    disconnectRealtime();
+    return;
+  }
+
+  const url = apiUrl(`/api/events?ticket=${encodeURIComponent(ticket)}`);
   const source = new EventSource(url);
   state.eventSource = source;
 
@@ -428,7 +440,7 @@ function saveSession(token, user) {
   localStorage.setItem('pardogo_token', token);
   localStorage.setItem('pardogo_user', JSON.stringify(user));
   renderSession();
-  connectRealtime();
+  connectRealtime().catch(() => {});
 }
 
 function clearSession() {
@@ -1778,7 +1790,7 @@ function setApiBaseUrl(value) {
   else localStorage.removeItem('pardogo_api_base');
   renderApiBaseStatus();
   disconnectRealtime();
-  if (state.token) connectRealtime();
+  if (state.token) connectRealtime().catch(() => {});
 }
 
 function wireEvents() {
@@ -2294,7 +2306,7 @@ async function boot() {
   if (!state.user && intent.view === 'register') showRegisterPanel();
   if (!state.user && intent.view === 'login') showLoginPanel();
   if (state.user) activateTab(targetAreaForCurrentUser());
-  if (state.token) connectRealtime();
+  if (state.token) connectRealtime().catch(() => {});
   renderRouteMap();
   estimateFare().catch(() => {});
   updateMobilePermissionsStatus().catch(() => {});
