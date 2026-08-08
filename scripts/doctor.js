@@ -20,7 +20,7 @@ console.log(`Node: ${process.version}`);
 const major = Number(process.versions.node.split('.')[0]);
 const minor = Number(process.versions.node.split('.')[1]);
 if (major < 22 || (major === 22 && minor < 5)) {
-  console.error('✗ Node precisa ser 22.5 ou superior por causa do node:sqlite.');
+  console.error('✗ Node precisa ser 22.13 ou superior (e menor que 25) por causa do node:sqlite estável.');
   failed = true;
 } else {
   console.log('✓ Node compatível');

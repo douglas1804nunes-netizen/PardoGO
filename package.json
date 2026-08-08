@@ -16,7 +16,7 @@
     "cap:open:android": "npx cap open android"
   },
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0 <25"
   },
   "keywords": [
     "deploy",

@@ -3,13 +3,14 @@
 window.PARDOGO_MOBILE_CONFIG = {
   apiBaseUrl: 'https://pardogo-8yn0.onrender.com',
   appStage: 'production',
+  forceLoginOnOpen: true,
   enableApiSetupScreen: false,
   adminOnlyApk: false,
   adminWebOnly: true,
   googleClientId: '',
   autoSelectProfile: true,
   profiles: {
-    development: 'http://192.168.1.7:5173',
+    development: 'http://localhost:5173',
     production: 'https://pardogo-8yn0.onrender.com'
   }
 };

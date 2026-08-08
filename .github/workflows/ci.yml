@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check server syntax
+        run: node --check server.js
+
+      - name: Run test suite
+        run: npm test
+
+      - name: Run doctor
+        run: npm run doctor
+
+      - name: Check Capacitor CLI
+        run: npx cap --version
+
+      - name: Run Capacitor doctor
+        run: npx cap doctor
+
+      - name: Run mobile checks
+        run: npm run mobile:check

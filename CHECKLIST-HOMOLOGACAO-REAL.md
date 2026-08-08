@@ -1,50 +1,57 @@
 # Checklist de Homologacao Real - PardoGo
 
-## 1. Prontidao tecnica (ja validada)
-- API local respondendo: `http://localhost:5173/api/health`
-- API producao Render respondendo: `https://pardogo-8yn0.onrender.com/api/health`
-- Testes automatizados: `npm run test`
-- Diagnostico estrutural: `npm run doctor`
-- Diagnostico mobile: `npm run mobile:check`
-- Build Android release: `android/app/build/outputs/apk/release/app-release.apk`
-- SHA256 do APK release: `788A2CD82DA55A47F795DE1F9CC7F90E489F1B741786A92ED66A965F2DE986CA`
+Este documento é um roteiro de execução. Marque apenas após validar no ambiente alvo.
 
-## 2. Usuarios cadastrados (local)
-- Admin: ativo
-- Motorista: aprovado
-- Passageiros: ativos
+## 1. Preparação
 
-Observacao: se for validar em producao, os usuarios da base local e da base Render podem ser diferentes.
+- [ ] Confirmar API de produção: `https://pardogo-8yn0.onrender.com`
+- [ ] Confirmar `CORS_ORIGIN` sem wildcard
+- [ ] Confirmar `DB_PATH=/var/data/pardogo.sqlite`
+- [ ] Confirmar credenciais admin definidas por variáveis de ambiente
 
-## 3. Instalar APK em outros celulares
-1. Copiar `android/app/build/outputs/apk/release/app-release.apk` para o celular.
-2. Conferir o hash SHA256 no computador antes de enviar (integridade).
-3. No Android, permitir instalacao de fontes desconhecidas para o app usado no envio.
-4. Instalar e abrir o app.
-5. Confirmar que o app aponta para producao em `public/mobile-config.js`.
+## 2. Build e diagnóstico
 
-## 4. Roteiro de homologacao com usuarios reais
-1. Login de passageiro com conta ativa.
-2. Login de motorista com conta aprovada.
-3. Passageiro solicita corrida (origem + destino + estimativa).
-4. Motorista visualiza e aceita corrida.
-5. Passageiro e motorista acompanham status em tempo real.
-6. Finalizar corrida.
-7. Validar historico da corrida em Passageiro, Motorista e Admin.
-8. Validar pagamento (Pix, Dinheiro e Saldo do app quando aplicavel).
-9. Abrir chamado de suporte e enviar denuncia para testar trilha de seguranca.
-10. Validar estabilidade apos logout/login novamente.
+- [ ] `node --check server.js`
+- [ ] `npm test`
+- [ ] `npm run doctor`
+- [ ] `npm run mobile:check`
+- [ ] `npx cap sync android`
+- [ ] `cd android && gradlew.bat assembleDebug`
+
+## 3. Fluxos funcionais obrigatórios
+
+- [ ] Health endpoint responde 200 com `ok=true`
+- [ ] Cadastro de passageiro
+- [ ] Cadastro de motorista
+- [ ] Aprovação de motorista (admin)
+- [ ] Login passageiro/motorista/admin
+- [ ] Motorista online
+- [ ] Criação de corrida
+- [ ] Aceite da corrida
+- [ ] Concorrência: dois motoristas tentando aceitar
+- [ ] Finalização da corrida
+- [ ] Cancelamento da corrida
+- [ ] Pagamento Dinheiro
+- [ ] Pagamento PIX
+- [ ] Pagamento Saldo do app
+- [ ] Saldo insuficiente bloqueia corrida
+- [ ] Retry com mesma idempotencyKey não duplica corrida
+- [ ] Estorno de corrida cancelada
+- [ ] SSE (criação/aceite/finalização/cancelamento)
+- [ ] Logout e login novamente
+- [ ] CORS e preflight
+- [ ] Rate limit e autenticação
+- [ ] Geolocalização no app
+
+## 4. APK/AAB
+
+- [ ] Verificar que `android/app/src/main/assets/public/mobile-config.js` aponta para produção HTTPS
+- [ ] Verificar `enableApiSetupScreen=false` em build release
+- [ ] Se gerar release, calcular novo SHA256 do artefato atual (não reutilizar hash antigo)
 
 ## 5. Critérios de aceite
-- Nao pode haver erro de login/cadastro para contas ativas.
-- Corrida deve percorrer: solicitada -> aceita -> finalizada sem inconsistencias.
-- Painel Admin deve refletir usuarios e corridas corretamente.
-- App nao pode travar ao alternar entre telas e mapa.
-- API de producao deve permanecer com health 200 durante o teste.
 
-## 6. Comandos uteis
-- `npm run test`
-- `npm run doctor`
-- `npm run mobile:check`
-- `npm run cap:sync:android`
-- Build release manual: `cd android && gradlew.bat assembleRelease`
+- [ ] Sem inconsistência financeira (débito/estorno/ledger)
+- [ ] Sem duplicidade de corrida por retry/concorrência
+- [ ] Sem segredos expostos em logs, docs ou Git
+- [ ] Sem regressão crítica de fluxo passageiro/motorista/admin

@@ -3,44 +3,30 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
+const { getEnvConfig, validateEnvConfig } = require('./src/config/env');
 
-function loadLocalEnv(filePath) {
-  if (!fs.existsSync(filePath)) return;
-  const content = fs.readFileSync(filePath, 'utf8');
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const idx = line.indexOf('=');
-    if (idx <= 0) continue;
-    const key = line.slice(0, idx).trim();
-    let value = line.slice(idx + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    if (!Object.prototype.hasOwnProperty.call(process.env, key)) {
-      process.env[key] = value;
-    }
-  }
-}
-
-loadLocalEnv(path.join(__dirname, '.env'));
+const envConfig = getEnvConfig();
+validateEnvConfig(envConfig);
 
 const APP_VERSION = '1.4.0';
-const NODE_ENV = process.env.NODE_ENV || 'development';
-const PORT = Number(process.env.PORT || 5173);
+const NODE_ENV = envConfig.NODE_ENV;
+const PORT = Number(envConfig.PORT || 5173);
 const DATA_DIR = path.join(__dirname, 'data');
-const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'pardogo.sqlite');
+const DB_PATH = envConfig.DB_PATH || path.join(DATA_DIR, 'pardogo.sqlite');
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const APP_BASE_URL = process.env.APP_BASE_URL || `https://pardogo-8yn0.onrender.com`;
-const CANONICAL_BASE_URL = process.env.CANONICAL_BASE_URL || APP_BASE_URL;
-const SESSION_DAYS = Number(process.env.SESSION_DAYS || 7);
-const ADMIN_INITIAL_PHONE = String(process.env.ADMIN_INITIAL_PHONE || '67999281729').trim().toLowerCase();
-const ADMIN_INITIAL_PASSWORD = String(process.env.ADMIN_INITIAL_PASSWORD || 'Duarte1052');
+const APP_BASE_URL = envConfig.APP_BASE_URL;
+const CANONICAL_BASE_URL = envConfig.CANONICAL_BASE_URL || envConfig.APP_BASE_URL;
+const SESSION_DAYS = Number(envConfig.SESSION_DAYS || 7);
 const ADMIN_LEGACY_ALIAS = 'admin';
-const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || '').trim();
-const FORCE_HTTPS = process.env.FORCE_HTTPS === '1';
-const TRUST_PROXY = process.env.TRUST_PROXY === '1';
-const REQUIRE_SECURE_ENV = process.env.REQUIRE_SECURE_ENV === '1';
+const ADMIN_INITIAL_PHONE_RAW = String(envConfig.ADMIN_INITIAL_PHONE || ADMIN_LEGACY_ALIAS).trim().toLowerCase();
+const ADMIN_INITIAL_PHONE = ADMIN_INITIAL_PHONE_RAW === ADMIN_LEGACY_ALIAS
+  ? ADMIN_LEGACY_ALIAS
+  : ADMIN_INITIAL_PHONE_RAW.replace(/\D/g, '');
+const ADMIN_INITIAL_PASSWORD = String(envConfig.ADMIN_INITIAL_PASSWORD || 'troque-essa-senha-forte');
+const GOOGLE_CLIENT_ID = String(envConfig.GOOGLE_CLIENT_ID || '').trim();
+const FORCE_HTTPS = Boolean(envConfig.FORCE_HTTPS);
+const TRUST_PROXY = Boolean(envConfig.TRUST_PROXY);
+const REQUIRE_SECURE_ENV = Boolean(envConfig.REQUIRE_SECURE_ENV);
 const APP_BASE_ORIGIN = (() => {
   try { return new URL(APP_BASE_URL).origin; } catch { return ''; }
 })();
@@ -50,46 +36,50 @@ const CANONICAL_BASE_ORIGIN = (() => {
 const CANONICAL_HOST = (() => {
   try { return new URL(CANONICAL_BASE_URL).host; } catch { return ''; }
 })();
-const CANONICAL_REDIRECT_HOSTS = String(process.env.CANONICAL_REDIRECT_HOSTS || 'pardogo.onrender.com')
-  .split(',')
-  .map(item => item.trim().toLowerCase())
-  .filter(Boolean);
-const DEFAULT_CORS_ORIGINS = [
-  APP_BASE_ORIGIN,
-  CANONICAL_BASE_ORIGIN,
-  'https://pardogo-8yn0.onrender.com',
-  'https://pardogo.onrender.com'
-].filter((value, index, arr) => value && arr.indexOf(value) === index);
-const CORS_ORIGIN = String(process.env.CORS_ORIGIN || DEFAULT_CORS_ORIGINS.join(',') || APP_BASE_ORIGIN || '').trim();
+const CANONICAL_REDIRECT_HOSTS = envConfig.CANONICAL_REDIRECT_HOSTS || [];
+const DEFAULT_CORS_ORIGINS = envConfig.DEFAULT_CORS_ORIGINS || [];
+const CORS_ORIGIN = String(envConfig.CORS_ORIGIN || DEFAULT_CORS_ORIGINS.join(',') || APP_BASE_ORIGIN || '').trim();
 const CORS_ALLOW_ALL = CORS_ORIGIN === '*';
-const CORS_KNOWN_RENDER_ORIGINS = ['https://pardogo-8yn0.onrender.com', 'https://pardogo.onrender.com'];
+const CORS_KNOWN_RENDER_ORIGINS = ['https://pardogo-8yn0.onrender.com'];
+const CORS_CAPACITOR_ORIGINS = [
+  'https://localhost',
+];
+const CORS_LOCAL_DEV_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000'
+];
 const CORS_ALLOWED_ORIGINS = CORS_ALLOW_ALL
   ? ['*']
   : Array.from(new Set([
     ...CORS_ORIGIN.split(',').map(item => item.trim()).filter(Boolean),
     ...DEFAULT_CORS_ORIGINS,
-    ...CORS_KNOWN_RENDER_ORIGINS
+    ...CORS_KNOWN_RENDER_ORIGINS,
+    ...CORS_CAPACITOR_ORIGINS,
+    ...(NODE_ENV === 'production' ? [] : CORS_LOCAL_DEV_ORIGINS)
   ]));
-const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
-const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX || 300);
+const RATE_LIMIT_WINDOW_MS = Number(envConfig.RATE_LIMIT_WINDOW_MS || 60_000);
+const RATE_LIMIT_MAX = Number(envConfig.RATE_LIMIT_MAX || 300);
 const rateLimitBuckets = new Map();
-const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
-const LOGIN_LOCK_MINUTES = Number(process.env.LOGIN_LOCK_MINUTES || 15);
+const LOGIN_MAX_ATTEMPTS = Number(envConfig.LOGIN_MAX_ATTEMPTS || 5);
+const LOGIN_LOCK_MINUTES = Number(envConfig.LOGIN_LOCK_MINUTES || 15);
 const loginAttemptBuckets = new Map();
 const MAP_DEFAULT_CENTER = { lat: -21.302, lng: -52.833, label: 'Santa Rita do Pardo - MS' };
-const CITY_GEOFENCE_RADIUS_KM = Number(process.env.CITY_GEOFENCE_RADIUS_KM || 55);
-const CITY_AVERAGE_SPEED_KMH = Number(process.env.CITY_AVERAGE_SPEED_KMH || 28);
-const MAP_TIMEOUT_MS = Number(process.env.MAP_TIMEOUT_MS || 5500);
+const CITY_GEOFENCE_RADIUS_KM = Number(envConfig.CITY_GEOFENCE_RADIUS_KM || 55);
+const CITY_AVERAGE_SPEED_KMH = Number(envConfig.CITY_AVERAGE_SPEED_KMH || 28);
+const MAP_TIMEOUT_MS = Number(envConfig.MAP_TIMEOUT_MS || 5500);
 const eventClients = new Map();
 const sseTickets = new Map();
-const SSE_PING_MS = Number(process.env.SSE_PING_MS || 25000);
-const SSE_TICKET_TTL_MS = Number(process.env.SSE_TICKET_TTL_MS || 60_000);
+const SSE_PING_MS = Number(envConfig.SSE_PING_MS || 25000);
+const SSE_TICKET_TTL_MS = Number(envConfig.SSE_TICKET_TTL_MS || 60_000);
 const PAYMENT_METHODS = ['Pix', 'Dinheiro', 'Saldo do app'];
-const PIX_KEY = String(process.env.PIX_KEY || ADMIN_INITIAL_PHONE || '').trim();
-const PIX_MERCHANT_NAME = String(process.env.PIX_MERCHANT_NAME || 'PARDOGO').trim();
-const PIX_MERCHANT_CITY = String(process.env.PIX_MERCHANT_CITY || 'SANTA RITA DO PARDO').trim();
-const PIX_DESCRIPTION = String(process.env.PIX_DESCRIPTION || 'RECARGA PARDOGO').trim();
-const PIX_WEBHOOK_SECRET = String(process.env.PIX_WEBHOOK_SECRET || '').trim();
+const PIX_KEY = String(envConfig.PIX_KEY || ADMIN_INITIAL_PHONE || '').trim();
+const PIX_MERCHANT_NAME = String(envConfig.PIX_MERCHANT_NAME || 'PARDOGO').trim();
+const PIX_MERCHANT_CITY = String(envConfig.PIX_MERCHANT_CITY || 'SANTA RITA DO PARDO').trim();
+const PIX_DESCRIPTION = String(envConfig.PIX_DESCRIPTION || 'RECARGA PARDOGO').trim();
+const PIX_WEBHOOK_ENABLED = Boolean(envConfig.PIX_WEBHOOK_ENABLED);
+const PIX_WEBHOOK_SECRET = String(envConfig.PIX_WEBHOOK_SECRET || '').trim();
 
 const defaultTariffRules = {
   base: 5,
@@ -101,10 +91,14 @@ const defaultTariffRules = {
 };
 
 let db;
+let isDbClosed = false;
+let isShuttingDown = false;
+const ssePingIntervals = new Set();
 
 function openDatabase() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   db = new DatabaseSync(DB_PATH);
+  isDbClosed = false;
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA busy_timeout = 5000;');
@@ -213,7 +207,10 @@ function migrate() {
       method TEXT NOT NULL,
       description TEXT DEFAULT '',
       reference_id TEXT,
+      idempotency_key TEXT,
+      status TEXT NOT NULL DEFAULT 'posted' CHECK (status IN ('posted', 'reversed', 'pending')),
       created_at TEXT NOT NULL,
+      updated_at TEXT,
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
 
@@ -370,6 +367,36 @@ function migrate() {
   addColumnIfMissing('rides', 'cancelled_at', 'TEXT');
   addColumnIfMissing('rides', 'cancelled_by', 'TEXT');
   addColumnIfMissing('rides', 'cancel_reason', 'TEXT');
+  addColumnIfMissing('rides', 'idempotency_key', 'TEXT');
+  addColumnIfMissing('wallet_transactions', 'idempotency_key', 'TEXT');
+  addColumnIfMissing('wallet_transactions', 'status', 'TEXT NOT NULL DEFAULT "posted"');
+  addColumnIfMissing('wallet_transactions', 'updated_at', 'TEXT');
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_transactions_idempotency ON wallet_transactions(idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_passenger_idempotency
+    ON rides(passenger_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_pix_topups_txid ON pix_topups(txid);
+  `);
+
+  const duplicatePixTxid = db.prepare(`
+    SELECT txid, COUNT(*) AS count
+    FROM pix_topups
+    WHERE txid IS NOT NULL AND TRIM(txid) <> ''
+    GROUP BY txid
+    HAVING COUNT(*) > 1
+    LIMIT 1
+  `).get();
+
+  if (!duplicatePixTxid) {
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_pix_topups_txid_unique ON pix_topups(txid);');
+  } else {
+    console.warn(`Aviso: duplicidade de txid detectada em pix_topups (txid=${duplicatePixTxid.txid}). Índice UNIQUE não aplicado.`);
+  }
 }
 
 function seed() {
@@ -460,12 +487,16 @@ function nowIso() {
 function normalizePhone(phone) {
   const raw = String(phone || '').trim().toLowerCase();
   if (!raw) return '';
-  if (raw === ADMIN_LEGACY_ALIAS) return ADMIN_INITIAL_PHONE;
-  if (raw === ADMIN_INITIAL_PHONE) return raw;
-  return raw.replace(/\D/g, '');
+  if (raw === ADMIN_LEGACY_ALIAS) {
+    return NODE_ENV !== 'production' ? ADMIN_INITIAL_PHONE : '';
+  }
+  const digits = raw.replace(/\D/g, '');
+  if (digits && digits === ADMIN_INITIAL_PHONE) return ADMIN_INITIAL_PHONE;
+  return digits;
 }
 
 function isValidPhone(phone) {
+  if (NODE_ENV !== 'production' && phone === ADMIN_LEGACY_ALIAS) return true;
   if (phone === ADMIN_INITIAL_PHONE) return true;
   return /^\d{10,13}$/.test(phone);
 }
@@ -727,6 +758,88 @@ function getAllUsers() {
   return db.prepare('SELECT * FROM users ORDER BY created_at DESC').all().map(rowToUser);
 }
 
+function isUniqueConstraintError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('unique constraint failed');
+}
+
+function withImmediateTransaction(work) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = work();
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // Sem acao: rollback ja foi aplicado ou transacao encerrada.
+    }
+    throw error;
+  }
+}
+
+function normalizeIdempotencyKey(value) {
+  if (value === undefined || value === null) return null;
+  const normalized = String(value).trim();
+  if (!normalized) return null;
+  if (!/^[A-Za-z0-9:_\-.]{8,120}$/.test(normalized)) {
+    throw Object.assign(new Error('idempotencyKey inválida. Use 8-120 caracteres [A-Za-z0-9:_-.].'), { statusCode: 400 });
+  }
+  return normalized;
+}
+
+function findWalletTransactionByIdempotency(idempotencyKey) {
+  if (!idempotencyKey) return null;
+  return db.prepare('SELECT id FROM wallet_transactions WHERE idempotency_key = ? LIMIT 1').get(String(idempotencyKey));
+}
+
+function creditWalletWithLedger({ userId, amount, method, description, referenceId = null, idempotencyKey = null, status = 'posted' }) {
+  const value = Number(Number(amount || 0).toFixed(2));
+  if (!Number.isFinite(value) || value <= 0) throw new Error('Informe um valor válido para crédito.');
+  const now = nowIso();
+  const updated = db.prepare('UPDATE users SET wallet_balance = ROUND(wallet_balance + ?, 2), updated_at = ? WHERE id = ?')
+    .run(value, now, userId);
+  if (!updated.changes) throw new Error('Usuário da carteira não encontrado.');
+  createWalletTransaction({
+    userId,
+    type: 'credit',
+    amount: value,
+    method,
+    description,
+    referenceId,
+    idempotencyKey,
+    status
+  });
+  return getWalletBalance(userId);
+}
+
+function debitWalletWithLedger({ userId, amount, method, description, referenceId = null, idempotencyKey = null, status = 'posted' }) {
+  const value = Number(Number(amount || 0).toFixed(2));
+  if (!Number.isFinite(value) || value <= 0) throw new Error('Valor de débito inválido.');
+  const now = nowIso();
+  const updated = db.prepare(`
+    UPDATE users
+    SET wallet_balance = ROUND(wallet_balance - ?, 2), updated_at = ?
+    WHERE id = ? AND wallet_balance >= ?
+  `).run(value, now, userId, value);
+  if (!updated.changes) {
+    const current = getWalletBalance(userId);
+    throw new Error(`Saldo insuficiente. Saldo atual: R$ ${current.toFixed(2)}.`);
+  }
+  createWalletTransaction({
+    userId,
+    type: 'debit',
+    amount: value,
+    method,
+    description,
+    referenceId,
+    idempotencyKey,
+    status
+  });
+  return getWalletBalance(userId);
+}
+
 function getWalletBalance(userId) {
   const row = db.prepare('SELECT wallet_balance FROM users WHERE id = ?').get(userId);
   return Number(Number(row?.wallet_balance || 0).toFixed(2));
@@ -737,21 +850,27 @@ function updateWalletBalance(userId, nextBalance) {
   db.prepare('UPDATE users SET wallet_balance = ?, updated_at = ? WHERE id = ?').run(amount, nowIso(), userId);
 }
 
-function createWalletTransaction({ userId, type, amount, method, description, referenceId }) {
+function createWalletTransaction({ userId, type, amount, method, description, referenceId, idempotencyKey, status = 'posted' }) {
   const value = Number(Number(amount || 0).toFixed(2));
+  const id = crypto.randomUUID();
+  const createdAt = nowIso();
   db.prepare(`
-    INSERT INTO wallet_transactions (id, user_id, type, amount, method, description, reference_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO wallet_transactions (id, user_id, type, amount, method, description, reference_id, idempotency_key, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    crypto.randomUUID(),
+    id,
     userId,
     type,
     value,
     String(method || '').slice(0, 40),
     String(description || '').slice(0, 220),
     referenceId ? String(referenceId).slice(0, 80) : null,
-    nowIso()
+    idempotencyKey ? String(idempotencyKey).slice(0, 120) : null,
+    String(status || 'posted').slice(0, 20),
+    createdAt,
+    createdAt
   );
+  return { id };
 }
 
 function getWalletTransactions(userId, limit = 20) {
@@ -884,33 +1003,44 @@ function markPixTopupPaidByUser(topupId, userId) {
 }
 
 function confirmPixTopupByAdmin(topupId, adminUserId, approve = true, adminNote = '') {
-  const topup = db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(String(topupId || ''));
-  if (!topup) return null;
-  if (topup.status === 'confirmed' || topup.status === 'rejected') return rowToPixTopup(topup);
+  const rawTopupId = String(topupId || '').trim();
+  if (!rawTopupId) return null;
 
-  const now = nowIso();
-  const nextStatus = approve ? 'confirmed' : 'rejected';
-  db.exec('BEGIN');
-  try {
-    db.prepare(`
+  return withImmediateTransaction(() => {
+    const topup = db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(rawTopupId);
+    if (!topup) return null;
+    if (topup.status === 'confirmed' || topup.status === 'rejected') return rowToPixTopup(topup);
+
+    const now = nowIso();
+    const nextStatus = approve ? 'confirmed' : 'rejected';
+    const update = db.prepare(`
       UPDATE pix_topups
       SET status = ?, admin_note = ?, confirmed_by = ?, confirmed_at = ?, updated_at = ?
-      WHERE id = ?
+      WHERE id = ? AND status IN ('pending', 'awaiting_confirmation')
     `).run(nextStatus, String(adminNote || '').slice(0, 200), adminUserId, now, now, topup.id);
 
-    if (approve && !walletReferenceExists(topup.id)) {
-      topupWallet(topup.user_id, Number(topup.amount || 0), 'Pix', {
-        referenceId: topup.id,
-        description: 'Recarga PIX confirmada'
-      });
+    if (!update.changes) {
+      return rowToPixTopup(db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(topup.id));
     }
-    db.exec('COMMIT');
-  } catch (error) {
-    db.exec('ROLLBACK');
-    throw error;
-  }
 
-  return rowToPixTopup(db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(topup.id));
+    if (approve) {
+      const topupCreditKey = `pix:confirm:${topup.id}`;
+      const existingCredit = findWalletTransactionByIdempotency(topupCreditKey);
+      if (!existingCredit?.id) {
+        creditWalletWithLedger({
+          userId: topup.user_id,
+          amount: Number(topup.amount || 0),
+          method: 'Pix',
+          description: 'Recarga PIX confirmada',
+          referenceId: topup.id,
+          idempotencyKey: topupCreditKey,
+          status: 'posted'
+        });
+      }
+    }
+
+    return rowToPixTopup(db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(topup.id));
+  });
 }
 
 function confirmPixTopupByTxid(txid, approve = true, adminNote = '', actorId = null) {
@@ -922,52 +1052,57 @@ function confirmPixTopupByTxid(txid, approve = true, adminNote = '', actorId = n
 function topupWallet(userId, amount, method = 'Pix', options = {}) {
   const value = Number(Number(amount || 0).toFixed(2));
   if (!Number.isFinite(value) || value <= 0) throw new Error('Informe um valor válido para recarga.');
-  const current = getWalletBalance(userId);
-  const next = Number((current + value).toFixed(2));
-  updateWalletBalance(userId, next);
-  createWalletTransaction({
-    userId,
-    type: 'credit',
-    amount: value,
-    method,
-    description: String(options.description || 'Recarga de saldo no aplicativo'),
-    referenceId: options.referenceId || null
+  const idempotencyKey = normalizeIdempotencyKey(options.idempotencyKey || options.referenceId || null);
+  return withImmediateTransaction(() => {
+    const existing = findWalletTransactionByIdempotency(idempotencyKey);
+    if (existing?.id) return getWalletBalance(userId);
+    return creditWalletWithLedger({
+      userId,
+      amount: value,
+      method,
+      description: String(options.description || 'Recarga de saldo no aplicativo'),
+      referenceId: options.referenceId || null,
+      idempotencyKey,
+      status: options.status || 'posted'
+    });
   });
-  return next;
 }
 
-function debitWalletForRide(userId, amount, rideId) {
+function debitWalletForRide(userId, amount, rideId, idempotencyKey = null) {
   const value = Number(Number(amount || 0).toFixed(2));
-  const current = getWalletBalance(userId);
-  if (current < value) throw new Error(`Saldo insuficiente. Saldo atual: R$ ${current.toFixed(2)}.`);
-  const next = Number((current - value).toFixed(2));
-  updateWalletBalance(userId, next);
-  createWalletTransaction({
-    userId,
-    type: 'debit',
-    amount: value,
-    method: 'Saldo do app',
-    description: 'Pagamento de corrida',
-    referenceId: rideId
+  const normalizedKey = normalizeIdempotencyKey(idempotencyKey);
+  return withImmediateTransaction(() => {
+    const existing = findWalletTransactionByIdempotency(normalizedKey);
+    if (existing?.id) return getWalletBalance(userId);
+    return debitWalletWithLedger({
+      userId,
+      amount: value,
+      method: 'Saldo do app',
+      description: 'Pagamento de corrida',
+      referenceId: rideId,
+      idempotencyKey: normalizedKey,
+      status: 'posted'
+    });
   });
-  return next;
 }
 
-function refundWalletForRide(userId, amount, rideId) {
+function refundWalletForRide(userId, amount, rideId, idempotencyKey = null) {
   const value = Number(Number(amount || 0).toFixed(2));
   if (!Number.isFinite(value) || value <= 0) return getWalletBalance(userId);
-  const current = getWalletBalance(userId);
-  const next = Number((current + value).toFixed(2));
-  updateWalletBalance(userId, next);
-  createWalletTransaction({
-    userId,
-    type: 'credit',
-    amount: value,
-    method: 'Saldo do app',
-    description: 'Estorno de corrida cancelada',
-    referenceId: rideId
+  const normalizedKey = normalizeIdempotencyKey(idempotencyKey);
+  return withImmediateTransaction(() => {
+    const existing = findWalletTransactionByIdempotency(normalizedKey);
+    if (existing?.id) return getWalletBalance(userId);
+    return creditWalletWithLedger({
+      userId,
+      amount: value,
+      method: 'Saldo do app',
+      description: 'Estorno de corrida cancelada',
+      referenceId: rideId,
+      idempotencyKey: normalizedKey,
+      status: 'posted'
+    });
   });
-  return next;
 }
 
 function getTariffRules() {
@@ -1075,8 +1210,8 @@ function insertRide(ride) {
     INSERT INTO rides (
       id, passenger_id, passenger_name, passenger_phone, driver_id, driver_name, driver_phone, status,
       origin, destination, distance_km, minutes, fare, payment_method, notes,
-      pickup_lat, pickup_lng, destination_lat, destination_lng, route_source, route_geometry, straight_line_km, created_at, accepted_at, finished_at, cancelled_at, cancelled_by, cancel_reason
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      pickup_lat, pickup_lng, destination_lat, destination_lng, route_source, route_geometry, straight_line_km, idempotency_key, created_at, accepted_at, finished_at, cancelled_at, cancelled_by, cancel_reason
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     ride.id,
     ride.passengerId,
@@ -1100,6 +1235,7 @@ function insertRide(ride) {
     ride.routeSource || 'manual',
     ride.routeGeometry ? JSON.stringify(ride.routeGeometry).slice(0, 250000) : null,
     Number.isFinite(Number(ride.straightLineKm)) ? Number(ride.straightLineKm) : null,
+    ride.idempotencyKey || null,
     ride.createdAt,
     ride.acceptedAt,
     ride.finishedAt,
@@ -1121,15 +1257,17 @@ function getAllRides() {
 
 function securityHeaders(extra = {}, req = null) {
   const corsOrigin = resolveCorsOrigin(req);
+  const connectSrc = NODE_ENV === 'production'
+    ? "connect-src 'self' https: https://localhost"
+    : "connect-src 'self' https: http://localhost:* http://127.0.0.1:* https://localhost";
   const headers = {
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'X-Frame-Options': 'DENY',
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Permissions-Policy': 'geolocation=(self), camera=(), microphone=(), payment=()',
-    'Access-Control-Allow-Origin': corsOrigin,
     'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
     'Access-Control-Max-Age': '86400',
     'Vary': 'Origin',
     'Content-Security-Policy': [
@@ -1137,9 +1275,9 @@ function securityHeaders(extra = {}, req = null) {
       "script-src 'self' https://unpkg.com https://accounts.google.com https://apis.google.com",
       "script-src-elem 'self' https://unpkg.com https://accounts.google.com https://apis.google.com",
       "style-src 'self' 'unsafe-inline' https://unpkg.com",
-      "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://unpkg.com",
+      "img-src 'self' data: blob: https://api.qrserver.com https://*.tile.openstreetmap.org https://unpkg.com",
       "font-src 'self' data:",
-      "connect-src 'self' https: http://localhost:* capacitor://localhost",
+      connectSrc,
       "frame-src 'self' https://accounts.google.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
@@ -1149,6 +1287,9 @@ function securityHeaders(extra = {}, req = null) {
   };
   if (NODE_ENV === 'production') {
     headers['Strict-Transport-Security'] = 'max-age=15552000; includeSubDomains';
+  }
+  if (corsOrigin) {
+    headers['Access-Control-Allow-Origin'] = corsOrigin;
   }
   return headers;
 }
@@ -1166,9 +1307,9 @@ function getClientIp(req) {
 function resolveCorsOrigin(req) {
   if (CORS_ALLOW_ALL) return '*';
   const requestOrigin = String(req?.headers?.origin || '').trim();
-  if (!requestOrigin) return CORS_ALLOWED_ORIGINS[0] || APP_BASE_ORIGIN || '';
+  if (!requestOrigin) return '';
   if (CORS_ALLOWED_ORIGINS.includes(requestOrigin)) return requestOrigin;
-  return CORS_ALLOWED_ORIGINS[0] || APP_BASE_ORIGIN || '';
+  return '';
 }
 
 function loginAttemptKey(req, phone) {
@@ -1304,8 +1445,19 @@ function canonicalRedirectLocation(req) {
 
 function validateProductionConfig() {
   const warnings = [];
+  try {
+    validateEnvConfig(envConfig);
+  } catch (error) {
+    if (NODE_ENV === 'production' && REQUIRE_SECURE_ENV) {
+      throw error;
+    }
+    warnings.push(error.message);
+  }
   if (NODE_ENV === 'production' && ADMIN_INITIAL_PASSWORD === '123456') {
     warnings.push('Troque ADMIN_INITIAL_PASSWORD antes de operar em produção.');
+  }
+  if (NODE_ENV === 'production' && !String(APP_BASE_URL).startsWith('https://')) {
+    warnings.push('APP_BASE_URL precisa usar HTTPS em produção.');
   }
   if (NODE_ENV === 'production' && !FORCE_HTTPS) {
     warnings.push('Ative FORCE_HTTPS=1 quando estiver atrás de proxy com HTTPS.');
@@ -1315,6 +1467,10 @@ function validateProductionConfig() {
   }
   if (NODE_ENV === 'production' && CORS_ALLOW_ALL) {
     warnings.push('Evite CORS_ORIGIN=* em produção. Defina origem explícita do app/web.');
+  }
+  if (NODE_ENV === 'production') {
+    const badOrigins = CORS_ALLOWED_ORIGINS.filter(origin => origin.startsWith('http://'));
+    if (badOrigins.length) warnings.push(`Remova origens HTTP em produção: ${badOrigins.join(', ')}`);
   }
   if (NODE_ENV === 'production' && !PIX_WEBHOOK_SECRET) {
     warnings.push('Defina PIX_WEBHOOK_SECRET para habilitar confirmação PIX automática com segurança.');
@@ -1499,17 +1655,24 @@ function handleEvents(req, res, url) {
   });
 
   const ping = setInterval(() => {
-    if (!eventClients.has(clientId)) return clearInterval(ping);
+    if (!eventClients.has(clientId)) {
+      clearInterval(ping);
+      ssePingIntervals.delete(ping);
+      return;
+    }
     try {
       writeSse(res, 'ping', { ok: true, clients: eventClients.size });
     } catch {
       eventClients.delete(clientId);
       clearInterval(ping);
+      ssePingIntervals.delete(ping);
     }
   }, SSE_PING_MS);
+  ssePingIntervals.add(ping);
 
   req.on('close', () => {
     clearInterval(ping);
+    ssePingIntervals.delete(ping);
     eventClients.delete(clientId);
   });
 }
@@ -1737,8 +1900,28 @@ function coordsFromBody(body) {
   return { origin, destination };
 }
 
-function driverAvailable() {
-  return db.prepare("SELECT * FROM users WHERE role = 'driver' AND status = 'approved' AND online = 1 ORDER BY updated_at DESC").all().map(rowToUser);
+function getDriverLocationStaleSeconds() {
+  return Math.max(Number(envConfig.DRIVER_LOCATION_STALE_SECONDS || 120), 30);
+}
+
+function isDriverLocationFresh(user) {
+  if (!user?.lastLocation?.updatedAt) return false;
+  const updatedAt = Date.parse(user.lastLocation.updatedAt);
+  if (!Number.isFinite(updatedAt)) return false;
+  return Date.now() - updatedAt <= getDriverLocationStaleSeconds() * 1000;
+}
+
+function driverAvailable(origin = null) {
+  const rows = db.prepare("SELECT * FROM users WHERE role = 'driver' AND status = 'approved' AND online = 1 ORDER BY updated_at DESC").all();
+  const users = rows.map(rowToUser).filter(Boolean);
+  if (!origin) return users;
+  return users
+    .filter(user => isDriverLocationFresh(user))
+    .sort((left, right) => {
+      const leftDistance = haversineDistanceKm(origin, left.lastLocation || { lat: origin.lat, lng: origin.lng });
+      const rightDistance = haversineDistanceKm(origin, right.lastLocation || { lat: origin.lat, lng: origin.lng });
+      return leftDistance - rightDistance;
+    });
 }
 
 function stats() {
@@ -1794,11 +1977,55 @@ function validateRequired(fields, body) {
   return null;
 }
 
+function normalizeRideStatus(status) {
+  const map = {
+    pending: 'pending',
+    requested: 'pending',
+    searching_driver: 'pending',
+    accepted: 'accepted',
+    driver_assigned: 'accepted',
+    driver_arriving: 'accepted',
+    driver_arrived: 'accepted',
+    in_progress: 'accepted',
+    finished: 'finished',
+    completed: 'finished',
+    cancelled: 'cancelled',
+    cancelled_by_passenger: 'cancelled',
+    cancelled_by_driver: 'cancelled',
+    cancelled_by_admin: 'cancelled',
+    no_driver_found: 'cancelled',
+    no_show: 'cancelled'
+  };
+  return map[String(status || '').trim().toLowerCase()] || String(status || '').trim().toLowerCase();
+}
+
+function canTransitionRide(fromStatus, toStatus) {
+  const from = normalizeRideStatus(fromStatus);
+  const to = normalizeRideStatus(toStatus);
+  const allowed = {
+    pending: ['accepted', 'cancelled'],
+    accepted: ['finished', 'cancelled'],
+    finished: [],
+    cancelled: []
+  };
+  return allowed[from]?.includes(to) ?? false;
+}
+
+function ensureRideTransition(ride, nextStatus) {
+  if (!ride) throw new Error('Corrida não encontrada.');
+  const from = normalizeRideStatus(ride.status);
+  const to = normalizeRideStatus(nextStatus);
+  if (!canTransitionRide(from, to)) {
+    throw Object.assign(new Error('Transição de estado inválida para esta corrida.'), { statusCode: 409 });
+  }
+  return { from, to };
+}
+
 function exportData() {
   return {
     meta: {
       appName: 'PardoGo',
-      version: '1.1.0',
+      version: APP_VERSION,
       exportedAt: nowIso(),
       database: 'SQLite', maps: 'Leaflet/OpenStreetMap + OSRM fallback', realtime: 'SSE/EventSource', cancellation: 'Cancelamento com motivo', contacts: 'WhatsApp/ligação registrados', ratings: 'Avaliações de corridas e qualidade', support: 'Chamados de suporte', reports: 'Denúncias e segurança operacional', legal: 'Termos e privacidade LGPD base' 
     },
@@ -2027,15 +2254,33 @@ async function handleApi(req, res, url) {
 
   try {
     if (method === 'GET' && pathname === '/api/health') {
-      return send(res, 200, {
-        ok: true,
-        app: 'PardoGo',
-        version: APP_VERSION,
-        environment: NODE_ENV,
-        baseUrl: APP_BASE_URL,
-        realtimeClients: eventClients.size,
-        features: ['api', 'sqlite', 'secure-sessions', 'security-headers', 'rate-limit', 'production-healthcheck', 'deploy-ready', 'geolocation', 'leaflet-map', 'route-calculation', 'realtime-sse', 'ride-cancellation', 'ride-contact', 'ride-rating', 'quality-dashboard', 'support-tickets', 'safety-reports', 'driver-documents', 'legal-lgpd', 'pwa', 'capacitor-android', 'mobile-api-config', 'mobile-cors', 'wallet-credit']
-      });
+      try {
+        const probe = db.prepare('SELECT 1 AS ok').get();
+        if (!probe || probe.ok !== 1) throw new Error('probe_failed');
+        return send(res, 200, {
+          ok: true,
+          app: 'PardoGo',
+          version: APP_VERSION,
+          environment: NODE_ENV,
+          renderCommit: String(process.env.RENDER_GIT_COMMIT || '').trim() || null,
+          renderBranch: String(process.env.RENDER_GIT_BRANCH || '').trim() || null,
+          renderRepo: String(process.env.RENDER_GIT_REPO || '').trim() || null,
+          uptimeSeconds: Math.round(process.uptime()),
+          baseUrl: APP_BASE_URL,
+          realtimeClients: eventClients.size,
+          database: 'sqlite',
+          features: ['api', 'sqlite', 'secure-sessions', 'security-headers', 'rate-limit', 'production-healthcheck', 'deploy-ready', 'geolocation', 'leaflet-map', 'route-calculation', 'realtime-sse', 'ride-cancellation', 'ride-contact', 'ride-rating', 'quality-dashboard', 'support-tickets', 'safety-reports', 'driver-documents', 'legal-lgpd', 'pwa', 'capacitor-android', 'mobile-api-config', 'mobile-cors', 'wallet-credit']
+        });
+      } catch {
+        return send(res, 503, {
+          ok: false,
+          app: 'PardoGo',
+          version: APP_VERSION,
+          environment: NODE_ENV,
+          uptimeSeconds: Math.round(process.uptime()),
+          error: 'Serviço temporariamente indisponível.'
+        });
+      }
     }
 
     if (method === 'POST' && pathname === '/api/events-ticket') {
@@ -2050,6 +2295,9 @@ async function handleApi(req, res, url) {
     }
 
     if (method === 'POST' && pathname === '/api/webhooks/pix/confirm') {
+      if (!PIX_WEBHOOK_ENABLED) {
+        return send(res, 404, { ok: false, error: 'Webhook PIX desabilitado.' });
+      }
       const auth = validatePixWebhookAuth(req);
       if (!auth.ok) return send(res, 401, { ok: false, error: auth.error });
       const body = await parseBody(req);
@@ -2394,7 +2642,22 @@ async function handleApi(req, res, url) {
           return send(res, 400, { ok: false, error: `Saldo insuficiente. Saldo atual: R$ ${balance.toFixed(2)}.` });
         }
       }
-      const availableDrivers = driverAvailable();
+      const availableDrivers = originCoords ? driverAvailable(originCoords) : driverAvailable();
+      const rideIdempotencyKey = normalizeIdempotencyKey(body.idempotencyKey || null);
+      if (rideIdempotencyKey) {
+        const existing = db.prepare('SELECT * FROM rides WHERE passenger_id = ? AND idempotency_key = ? LIMIT 1')
+          .get(user.id, rideIdempotencyKey);
+        if (existing) {
+          const existingRide = rowToRide(existing);
+          return send(res, 200, {
+            ok: true,
+            idempotentReplay: true,
+            message: 'Requisição repetida detectada. Retornando corrida já criada.',
+            ride: existingRide,
+            availableDrivers: availableDrivers.map(publicUser)
+          });
+        }
+      }
       const ride = {
         id: crypto.randomUUID(),
         passengerId: user.id,
@@ -2416,6 +2679,7 @@ async function handleApi(req, res, url) {
         routeSource: route?.source || body.routeSource || 'manual',
         routeGeometry: route?.geometry || body.routeGeometry || null,
         straightLineKm: route?.straightLineKm || null,
+        idempotencyKey: rideIdempotencyKey,
         createdAt: nowIso(),
         acceptedAt: null,
         finishedAt: null,
@@ -2423,10 +2687,42 @@ async function handleApi(req, res, url) {
         cancelledBy: null,
         cancelReason: null
       };
-      insertRide(ride);
-      if (paymentMethod === 'Saldo do app') {
-        const balanceAfter = debitWalletForRide(user.id, fare, ride.id);
-        audit(user.id, 'wallet_debit_ride', 'wallet', user.id, { rideId: ride.id, amount: fare, balance: balanceAfter });
+      try {
+        withImmediateTransaction(() => {
+          insertRide(ride);
+          if (paymentMethod === 'Saldo do app') {
+            const debitKey = normalizeIdempotencyKey(`ride:debit:${user.id}:${rideIdempotencyKey || ride.id}`);
+            const existingDebit = findWalletTransactionByIdempotency(debitKey);
+            const balanceAfter = existingDebit?.id
+              ? getWalletBalance(user.id)
+              : debitWalletWithLedger({
+                userId: user.id,
+                amount: fare,
+                method: 'Saldo do app',
+                description: 'Pagamento de corrida',
+                referenceId: ride.id,
+                idempotencyKey: debitKey,
+                status: 'posted'
+              });
+            audit(user.id, 'wallet_debit_ride', 'wallet', user.id, { rideId: ride.id, amount: fare, balance: balanceAfter });
+          }
+        });
+      } catch (error) {
+        if (isUniqueConstraintError(error) && rideIdempotencyKey) {
+          const existing = db.prepare('SELECT * FROM rides WHERE passenger_id = ? AND idempotency_key = ? LIMIT 1')
+            .get(user.id, rideIdempotencyKey);
+          if (existing) {
+            const existingRide = rowToRide(existing);
+            return send(res, 200, {
+              ok: true,
+              idempotentReplay: true,
+              message: 'Requisição concorrente detectada. Retornando corrida já criada.',
+              ride: existingRide,
+              availableDrivers: availableDrivers.map(publicUser)
+            });
+          }
+        }
+        throw error;
       }
       emitRideEvent('created', ride, { availableDrivers: availableDrivers.map(publicUser) });
       return send(res, 201, {
@@ -2512,6 +2808,11 @@ async function handleApi(req, res, url) {
       const ride = getRideById(acceptMatch[1]);
       if (!ride) return send(res, 404, { ok: false, error: 'Corrida não encontrada.' });
       const acceptedAt = nowIso();
+      try {
+        ensureRideTransition(ride, 'accepted');
+      } catch (error) {
+        return send(res, error.statusCode || 409, { ok: false, error: error.message });
+      }
       const result = db.prepare('UPDATE rides SET status = ?, driver_id = ?, driver_name = ?, driver_phone = ?, accepted_at = ? WHERE id = ? AND status = ?')
         .run('accepted', user.id, user.name, user.phone, acceptedAt, ride.id, 'pending');
       if (!result.changes) {
@@ -2532,7 +2833,11 @@ async function handleApi(req, res, url) {
       if (user.role === 'driver' && ride.driverId !== user.id) {
         return send(res, 403, { ok: false, error: 'Essa corrida pertence a outro motorista.' });
       }
-      if (ride.status !== 'accepted') return send(res, 409, { ok: false, error: 'A corrida precisa estar aceita para finalizar.' });
+      try {
+        ensureRideTransition(ride, 'finished');
+      } catch (error) {
+        return send(res, error.statusCode || 409, { ok: false, error: error.message });
+      }
       const finishedAt = nowIso();
       db.prepare('UPDATE rides SET status = ?, finished_at = ? WHERE id = ?').run('finished', finishedAt, ride.id);
       audit(user.id, 'finish_ride', 'ride', ride.id, { status: 'finished' });
@@ -2551,13 +2856,39 @@ async function handleApi(req, res, url) {
       if (!canCancelRide(user, ride)) return send(res, 403, { ok: false, error: 'Você não pode cancelar essa corrida.' });
       const body = await parseBody(req);
       const reason = String(body.reason || 'Sem motivo informado').trim().slice(0, 240) || 'Sem motivo informado';
-      const cancelledAt = nowIso();
-      db.prepare('UPDATE rides SET status = ?, cancelled_at = ?, cancelled_by = ?, cancel_reason = ? WHERE id = ?')
-        .run('cancelled', cancelledAt, user.id, reason, ride.id);
-      if (ride.paymentMethod === 'Saldo do app' && ['pending', 'accepted'].includes(ride.status)) {
-        const balanceAfter = refundWalletForRide(ride.passengerId, Number(ride.fare || 0), ride.id);
-        audit(user.id, 'wallet_refund_ride_cancel', 'wallet', ride.passengerId, { rideId: ride.id, amount: ride.fare, balance: balanceAfter });
+      try {
+        ensureRideTransition(ride, 'cancelled');
+      } catch (error) {
+        return send(res, error.statusCode || 409, { ok: false, error: error.message });
       }
+      const cancelledAt = nowIso();
+      withImmediateTransaction(() => {
+        const result = db.prepare(`
+          UPDATE rides
+          SET status = ?, cancelled_at = ?, cancelled_by = ?, cancel_reason = ?
+          WHERE id = ? AND status IN ('pending', 'accepted')
+        `).run('cancelled', cancelledAt, user.id, reason, ride.id);
+        if (!result.changes) {
+          throw Object.assign(new Error('Corrida já cancelada ou finalizada.'), { statusCode: 409 });
+        }
+
+        if (ride.paymentMethod === 'Saldo do app' && ['pending', 'accepted'].includes(ride.status)) {
+          const refundKey = normalizeIdempotencyKey(`ride:cancel-refund:${ride.id}`);
+          const existingRefund = findWalletTransactionByIdempotency(refundKey);
+          const balanceAfter = existingRefund?.id
+            ? getWalletBalance(ride.passengerId)
+            : creditWalletWithLedger({
+              userId: ride.passengerId,
+              amount: Number(ride.fare || 0),
+              method: 'Saldo do app',
+              description: 'Estorno de corrida cancelada',
+              referenceId: ride.id,
+              idempotencyKey: refundKey,
+              status: 'posted'
+            });
+          audit(user.id, 'wallet_refund_ride_cancel', 'wallet', ride.passengerId, { rideId: ride.id, amount: ride.fare, balance: balanceAfter });
+        }
+      });
       audit(user.id, 'cancel_ride', 'ride', ride.id, { reason, previousStatus: ride.status });
       const updatedRide = getRideById(ride.id);
       emitRideEvent('cancelled', updatedRide, { cancelledBy: publicUser(user), reason });
@@ -2832,12 +3163,69 @@ function serveStatic(req, res, url) {
   sendText(res, 200, fs.readFileSync(absolute), types[ext] || 'application/octet-stream', { 'Cache-Control': cache });
 }
 
+function closeDatabaseSafely() {
+  if (!db || isDbClosed) return;
+  try {
+    db.close();
+  } catch {
+    // Sem acao: fechamento best effort.
+  } finally {
+    isDbClosed = true;
+  }
+}
+
+function closeAllSseClients(reason = 'server-shutdown') {
+  for (const interval of ssePingIntervals) {
+    clearInterval(interval);
+  }
+  ssePingIntervals.clear();
+
+  for (const [clientId, client] of eventClients.entries()) {
+    try {
+      writeSse(client.res, 'shutdown', { ok: false, reason, message: 'Servidor em desligamento.' });
+      client.res.end();
+    } catch {
+      // Ignora erro de socket ja fechado.
+    }
+    eventClients.delete(clientId);
+  }
+  sseTickets.clear();
+}
+
+function installGracefulShutdown(server) {
+  const shutdown = signal => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    console.log(`Recebido ${signal}. Iniciando graceful shutdown...`);
+
+    closeAllSseClients(signal);
+
+    const hardStop = setTimeout(() => {
+      closeDatabaseSafely();
+      process.exit(1);
+    }, 15000);
+    hardStop.unref();
+
+    server.close(() => {
+      clearTimeout(hardStop);
+      closeDatabaseSafely();
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}
+
 function createServer() {
   validateProductionConfig();
   openDatabase();
   return http.createServer(async (req, res) => {
     res.req = req;
     const url = new URL(req.url, `http://${req.headers.host}`);
+    if (isShuttingDown) {
+      return send(res, 503, { ok: false, error: 'Servidor em desligamento. Tente novamente em instantes.' });
+    }
     if (req.method === 'OPTIONS') {
       res.writeHead(204, securityHeaders({}, req));
       return res.end();
@@ -2860,14 +3248,14 @@ function createServer() {
 
 if (require.main === module) {
   const server = createServer();
+  installGracefulShutdown(server);
   server.listen(PORT, () => {
     console.log(`PardoGo Etapa 14 rodando em http://localhost:${PORT}`);
     console.log(`Ambiente: ${NODE_ENV} | Base URL: ${APP_BASE_URL}`);
     console.log(`Banco SQLite: ${DB_PATH}`);
-    console.log(`Admin inicial: telefone ${ADMIN_INITIAL_PHONE} | senha configurada por ADMIN_INITIAL_PASSWORD`);
     const warnings = validateProductionConfig();
     warnings.forEach(warning => console.warn(`Aviso de produção: ${warning}`));
   });
 }
 
-module.exports = { createServer, calculateFare, defaultTariffRules, DB_PATH, openDatabase, systemChecklist, APP_VERSION };
+module.exports = { createServer, calculateFare, defaultTariffRules, DB_PATH, openDatabase, systemChecklist, APP_VERSION, closeDatabaseSafely };

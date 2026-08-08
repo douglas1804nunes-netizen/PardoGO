@@ -1,132 +1,73 @@
 # Deploy do PardoGo - Etapa 14
 
-Esta etapa prepara o projeto para sair do computador e ir para um endereço online com domínio e HTTPS.
+## Estratégia oficial
 
-## 1. Antes de publicar
+Deploy ativo no Render usa runtime Node com `render.yaml`.
 
-Checklist obrigatório:
+- URL atual de produção: `https://pardogo-8yn0.onrender.com`
+- build command: `npm ci --omit=dev`
+- start command: `npm run start`
+- health check: `/api/health`
+- disco persistente: `/var/data`
+- banco: `DB_PATH=/var/data/pardogo.sqlite`
 
-- Trocar a senha inicial do admin.
-- Usar HTTPS.
-- Definir domínio.
-- Fazer backup do banco antes e depois dos testes.
-- Testar cadastro, login, corrida, mapa, tempo real e painel admin.
-- Revisar termos de uso, política de privacidade e regras municipais para transporte privado.
+O `Dockerfile` permanece como alternativa para outros ambientes, mas nao é a fonte primária do deploy Render atual.
 
-## 2. Variáveis de ambiente
+## Variáveis obrigatórias de produção
 
-Copie o arquivo `.env.example` e configure conforme o servidor:
+Defina no Dashboard Render (sem commitar valores):
 
-```bash
-cp .env.example .env
-```
+- `NODE_ENV=production`
+- `APP_BASE_URL=https://pardogo-8yn0.onrender.com`
+- `CANONICAL_BASE_URL=https://pardogo-8yn0.onrender.com`
+- `DB_PATH=/var/data/pardogo.sqlite`
+- `FORCE_HTTPS=1`
+- `TRUST_PROXY=1`
+- `REQUIRE_SECURE_ENV=1`
+- `ADMIN_INITIAL_PHONE` (real, válido)
+- `ADMIN_INITIAL_PASSWORD` (forte, sem placeholder)
+- `CORS_ORIGIN=https://pardogo-8yn0.onrender.com,https://localhost`
 
-Principais variáveis:
+Para PIX webhook:
 
-```text
-NODE_ENV=production
-PORT=5173
-APP_BASE_URL=https://seudominio.com.br
-DB_PATH=./data/pardogo.sqlite
-ADMIN_INITIAL_PHONE=admin
-ADMIN_INITIAL_PASSWORD=troque-essa-senha-forte
-FORCE_HTTPS=1
-TRUST_PROXY=1
-```
+- `PIX_WEBHOOK_SECRET` (obrigatório se webhook habilitado)
 
-## 3. Opção simples: Render/Railway/Fly
+## Regras de segurança de deploy
 
-Use plataformas que suportem Node.js rodando continuamente. O projeto tem:
+- Nunca usar `CORS_ORIGIN=*` em produção.
+- Nunca usar `DB_PATH` em diretório temporário (`/tmp`, `temp`).
+- Nunca publicar senha padrão de admin em documentação.
+- Não fixar `PORT` em produção: usar `process.env.PORT`.
 
-- `package.json` com `npm run start`.
-- `render.yaml` como exemplo.
-- `Dockerfile` para plataformas que aceitam container.
-- `/api/health` para health check.
-
-Atenção: SQLite precisa de armazenamento persistente. Em serviços que apagam disco no redeploy, use volume persistente ou migre futuramente para PostgreSQL/Supabase.
-
-## 4. Opção profissional: VPS com Nginx + SSL
-
-Fluxo recomendado:
-
-1. Comprar VPS Linux.
-2. Instalar Node.js 22+.
-3. Enviar a pasta do projeto para `/var/www/pardogo`.
-4. Criar `.env` baseado no `.env.example`.
-5. Rodar:
+## Passo a passo de validação pós-deploy
 
 ```bash
-npm install --omit=dev
+node --check server.js
+npm test
 npm run doctor
-npm run start
+npm run mobile:check
 ```
 
-6. Configurar serviço systemd usando `deploy/systemd.service.example`.
-7. Configurar Nginx usando `deploy/nginx.conf.example`.
-8. Gerar SSL com Certbot/Let's Encrypt.
+Validações manuais mínimas:
 
-## 5. Backup
+1. `GET /api/health` com `ok=true` e status 200.
+2. Cadastro/login passageiro.
+3. Cadastro/aprovação/login motorista.
+4. Corrida: criar -> aceitar -> finalizar.
+5. Corrida com Saldo do app + cancelamento com estorno.
+6. SSE funcionando para passageiro e motorista.
+7. CORS aceitando apenas origens permitidas.
 
-Backup manual:
+## Android em produção
+
+`public/mobile-config.js` deve manter:
+
+- `apiBaseUrl: 'https://pardogo-8yn0.onrender.com'`
+- `appStage: 'production'`
+- `enableApiSetupScreen: false`
+
+Depois de alterar frontend/config:
 
 ```bash
-npm run backup
-```
-
-Recomendação para operação real: agendar backup diário do arquivo SQLite e salvar fora do servidor.
-
-## 6. Domínio
-
-No provedor do domínio, crie um apontamento DNS:
-
-```text
-Tipo: A
-Nome: @
-Valor: IP_DO_SERVIDOR
-```
-
-Para subdomínio:
-
-```text
-Tipo: A
-Nome: app
-Valor: IP_DO_SERVIDOR
-```
-
-Depois o app ficaria, por exemplo:
-
-```text
-https://app.seudominio.com.br
-```
-
-## 7. Observação importante
-
-Esta etapa deixa o projeto pronto para pré-produção. Para operação real com muitos usuários, a próxima evolução recomendada é migrar o banco SQLite para PostgreSQL/Supabase, adicionar upload real de documentos e criar notificações push.
-
-## Observação para Etapa 14 - App Android
-
-Depois de publicar o backend online, configure CORS e a URL da API para o app.
-
-No servidor, em `.env`:
-
-```env
-CORS_ORIGIN=*
-APP_BASE_URL=https://api.seudominio.com
-```
-
-No app, em `public/mobile-config.js`:
-
-```js
-window.PARDOGO_MOBILE_CONFIG = {
-  apiBaseUrl: 'https://api.seudominio.com',
-  appStage: 'production',
-  enableApiSetupScreen: true
-};
-```
-
-Depois rode:
-
-```bash
-npm run cap:sync:android
-npm run cap:open:android
+npx cap sync android
 ```
