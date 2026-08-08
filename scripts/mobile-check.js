@@ -35,5 +35,20 @@ if (!mobileConfig.includes('PARDOGO_MOBILE_CONFIG')) {
   console.log('✓ configuração mobile validada');
 }
 
+if (mobileConfig.includes("appStage: 'production'")) {
+  if (!mobileConfig.includes("apiBaseUrl: 'https://pardogo-8yn0.onrender.com'")) {
+    console.error('✗ Em produção, apiBaseUrl precisa apontar para API HTTPS oficial.');
+    ok = false;
+  }
+  if (mobileConfig.includes("enableApiSetupScreen: true")) {
+    console.error('✗ Em produção, enableApiSetupScreen deve ficar false para build release.');
+    ok = false;
+  }
+  if (/apiBaseUrl:\s*'https?:\/\/(localhost|127\.0\.0\.1|10\.|192\.168\.)/i.test(mobileConfig)) {
+    console.error('✗ Endpoint local detectado em build de produção.');
+    ok = false;
+  }
+}
+
 if (!ok) process.exit(1);
 console.log('✓ checklist mobile Etapa 14 validado');

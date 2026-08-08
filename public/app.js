@@ -1,29 +1,85 @@
 const OFFICIAL_PRODUCTION_API = 'https://pardogo-8yn0.onrender.com';
-const KNOWN_PRODUCTION_APIS = ['https://pardogo-8yn0.onrender.com', 'https://pardogo.onrender.com'];
+const KNOWN_PRODUCTION_APIS = ['https://pardogo-8yn0.onrender.com'];
 const LEGACY_API_BASES = [];
+const API_BASE_STORAGE_KEY = 'pardogo_api_base';
+const API_HEALTH_TIMEOUT_MS = 10000;
 
-function normalizeKnownApiBase(value) {
-  const base = String(value || '').trim().replace(/\/$/, '');
-  if (!base) return '';
+function appStage() {
+  return String(window.PARDOGO_MOBILE_CONFIG?.appStage || 'development').trim().toLowerCase();
+}
+
+function isProductionStage() {
+  return appStage() === 'production';
+}
+
+function isLocalOrigin(base) {
+  try {
+    const parsed = new URL(base);
+    return /^(localhost|127\.0\.0\.1)$/i.test(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function normalizeKnownApiBase(value, options = {}) {
+  const allowEmpty = options.allowEmpty !== false;
+  const requireHttps = options.requireHttps === true;
+  const raw = String(value ?? '').trim();
+  if (!raw) return allowEmpty ? '' : null;
+  const lowered = raw.toLowerCase();
+  if (lowered === 'undefined' || lowered === 'null') return allowEmpty ? '' : null;
+
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+
+  if (!/^https?:$/i.test(parsed.protocol)) return null;
+  if (requireHttps && parsed.protocol !== 'https:') return null;
+
+  let base = parsed.origin + parsed.pathname;
+  base = base.replace(/\/api\/?$/i, '');
+  base = base.replace(/\/+$/, '');
+  base = base.trim();
+
+  if (!base) return allowEmpty ? '' : null;
   if (LEGACY_API_BASES.includes(base)) return OFFICIAL_PRODUCTION_API;
   return base;
+}
+
+function readStoredApiBase() {
+  const stored = localStorage.getItem(API_BASE_STORAGE_KEY);
+  if (stored === null) return '';
+  const normalized = normalizeKnownApiBase(stored, { requireHttps: isProductionStage() });
+  if (!normalized) {
+    localStorage.removeItem(API_BASE_STORAGE_KEY);
+    return '';
+  }
+  if (isProductionStage() && isLocalOrigin(normalized)) {
+    localStorage.removeItem(API_BASE_STORAGE_KEY);
+    return '';
+  }
+  return normalized;
 }
 
 function initialApiBaseUrl() {
   const cfg = window.PARDOGO_MOBILE_CONFIG || {};
   const profiles = cfg.profiles && typeof cfg.profiles === 'object' ? cfg.profiles : null;
   const useProfile = Boolean(cfg.autoSelectProfile && profiles);
+  const requireHttps = isProductionStage();
 
   if (useProfile) {
-    const stage = String(cfg.appStage || 'development').trim().toLowerCase();
-    const profileUrl = normalizeKnownApiBase(profiles[stage]);
+    const stage = appStage();
+    const profileUrl = normalizeKnownApiBase(profiles[stage], { requireHttps });
     if (profileUrl) return profileUrl;
   }
 
-  const configured = normalizeKnownApiBase(cfg.apiBaseUrl);
+  const configured = normalizeKnownApiBase(cfg.apiBaseUrl, { requireHttps });
   if (configured) return configured;
 
-  const saved = normalizeKnownApiBase(localStorage.getItem('pardogo_api_base'));
+  const saved = readStoredApiBase();
   if (saved) return saved;
 
   return OFFICIAL_PRODUCTION_API;
@@ -57,7 +113,8 @@ const state = {
   },
   routeAutoTimer: null,
   walletPixPending: [],
-  walletPixCurrentId: ''
+  walletPixCurrentId: '',
+  pendingRideIdempotencyKey: null
 };
 
 const $ = selector => document.querySelector(selector);
@@ -69,10 +126,26 @@ const hasGeo = () => 'geolocation' in navigator;
 const hasLeaflet = () => Boolean(window.L && typeof window.L.map === 'function');
 const LOGIN_DEFAULT_STATUS = 'Informe seu telefone e senha para acessar.';
 const MOBILE_APP_CONFIG = window.PARDOGO_MOBILE_CONFIG || {};
+const FORCE_LOGIN_ON_OPEN = MOBILE_APP_CONFIG.forceLoginOnOpen !== false;
 const IS_NATIVE_APP = Boolean(window.Capacitor && typeof window.Capacitor.getPlatform === 'function' && window.Capacitor.getPlatform() !== 'web');
 const ADMIN_WEB_ONLY = Boolean(MOBILE_APP_CONFIG.adminWebOnly);
+const API_SETUP_ENABLED = MOBILE_APP_CONFIG.enableApiSetupScreen !== false;
 const ADMIN_MONITOR_TAB_TARGETS = ['adminPanel', 'securityPanel', 'passengerPanel', 'driverPanel', 'legalPanel', 'appPanel'];
 const MAIN_TAB_TARGETS = ['passengerPanel', 'driverPanel'];
+
+function randomIdPart(size = 8) {
+  const bytes = new Uint8Array(size);
+  if (window.crypto?.getRandomValues) {
+    window.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < size; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return Array.from(bytes).map(n => n.toString(16).padStart(2, '0')).join('');
+}
+
+function buildRideIdempotencyKey() {
+  return `ride:${Date.now().toString(36)}:${randomIdPart(8)}`;
+}
 
 function debounce(fn, delay = 350) {
   let timer = null;
@@ -98,6 +171,16 @@ function routeIntent() {
   if (area === 'passengerPanel' || path.endsWith('/passageiro.html')) return { view: null, area: 'passengerPanel' };
   if (area === 'adminPanel' || path.endsWith('/admin.html')) return { view: null, area: 'adminPanel' };
   return { view: null, area: null };
+}
+
+function shouldForceLoginLanding() {
+  if (!FORCE_LOGIN_ON_OPEN) return false;
+  const params = new URLSearchParams(window.location.search || '');
+  if (params.get('keepSession') === '1') return false;
+  const intent = routeIntent();
+  if (intent.area || intent.view === 'register') return false;
+  const path = String(window.location.pathname || '').toLowerCase();
+  return path === '/' || path.endsWith('/index.html');
 }
 
 function currentIntentArea() {
@@ -165,143 +248,143 @@ function toast(message, type = '') {
 }
 
 async function ensureWorkingApiBase() {
-  const current = normalizedApiBase();
+  const requireHttps = isProductionStage();
+  const current = normalizeKnownApiBase(normalizedApiBase(), { requireHttps });
+  const persisted = readStoredApiBase();
   const candidates = Array.from(new Set([
     current,
+    persisted,
+    normalizeKnownApiBase(window.PARDOGO_MOBILE_CONFIG?.apiBaseUrl, { requireHttps }),
+    normalizeKnownApiBase(window.PARDOGO_MOBILE_CONFIG?.profiles?.[appStage()], { requireHttps }),
     OFFICIAL_PRODUCTION_API,
-    ...KNOWN_PRODUCTION_APIS,
-    ''
-  ].filter(value => value !== null && value !== undefined)));
+    ...KNOWN_PRODUCTION_APIS
+  ].filter(Boolean)));
 
   for (const candidate of candidates) {
-    const base = String(candidate || '').trim().replace(/\/$/, '');
-    const target = base ? `${base}/api/config` : '/api/config';
-    try {
-      const response = await fetch(target, { headers: { Accept: 'application/json' } });
-      const text = await response.text();
-      let data = null;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        continue;
-      }
-      if (!response.ok || !data || data.ok !== true) continue;
-
-      if (base) {
-        state.apiBaseUrl = base;
-        localStorage.setItem('pardogo_api_base', base);
-      } else {
-        state.apiBaseUrl = '';
-        localStorage.removeItem('pardogo_api_base');
-      }
-      renderApiBaseStatus();
-      return true;
-    } catch {}
+    const base = normalizeKnownApiBase(candidate, { requireHttps });
+    if (!base) continue;
+    if (isProductionStage() && isLocalOrigin(base)) continue;
+    const health = await checkApiHealth(base);
+    if (!health.ok) continue;
+    state.apiBaseUrl = base;
+    localStorage.setItem(API_BASE_STORAGE_KEY, base);
+    renderApiBaseStatus();
+    logApiSelection('health-check');
+    return true;
   }
 
+  state.apiBaseUrl = OFFICIAL_PRODUCTION_API;
+  localStorage.setItem(API_BASE_STORAGE_KEY, OFFICIAL_PRODUCTION_API);
+  renderApiBaseStatus();
+  logApiSelection('fallback-oficial');
+  return false;
+}
+
+function shouldDebugApiLogs() {
+  return isProductionStage() === false || ['localhost', '127.0.0.1'].includes(window.location.hostname);
+}
+
+function logApiSelection(source = 'runtime') {
+  const base = normalizedApiBase() || OFFICIAL_PRODUCTION_API;
+  console.info(`[PardoGo API] ambiente=${appStage()}`);
+  console.info(`[PardoGo API] base=${base} origem=${source}`);
+}
+
+function sanitizeApiPath(pathValue) {
+  const raw = String(pathValue || '').trim();
+  if (!raw) return '/';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  let sanitized = raw.startsWith('/') ? raw : `/${raw}`;
+  sanitized = sanitized.replace(/^\/api\/api\//i, '/api/');
+  return sanitized;
+}
+
+function classifyHttpErrorMessage(status, data = {}) {
+  const backendError = String(data?.error || data?.message || '').trim();
+  if (status === 400) return backendError || 'Requisição inválida.';
+  if (status === 401) return 'Telefone ou senha inválidos.';
+  if (status === 403) return backendError || 'Acesso negado.';
+  if (status === 429) return backendError || 'Muitas tentativas. Aguarde e tente novamente.';
+  if (status >= 500) return 'Erro interno do servidor.';
+  return backendError || `Erro HTTP ${status}.`;
+}
+
+async function checkApiHealth(baseUrl, timeoutMs = API_HEALTH_TIMEOUT_MS) {
+  const normalizedBase = normalizeKnownApiBase(baseUrl, { requireHttps: isProductionStage(), allowEmpty: false });
+  if (!normalizedBase) return { ok: false, reason: 'invalid-base' };
+  const target = `${normalizedBase}/api/health`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(target, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
+    return { ok: response.ok === true && data?.ok === true, status: response.status };
+  } catch (error) {
+    return { ok: false, reason: error?.name || 'network-error' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function diagnoseAndRecoverApiBase() {
+  const current = normalizedApiBase();
+  if (current && current !== OFFICIAL_PRODUCTION_API) {
+    const officialHealth = await checkApiHealth(OFFICIAL_PRODUCTION_API);
+    if (officialHealth.ok) {
+      state.apiBaseUrl = OFFICIAL_PRODUCTION_API;
+      localStorage.setItem(API_BASE_STORAGE_KEY, OFFICIAL_PRODUCTION_API);
+      renderApiBaseStatus();
+      logApiSelection('recover-oficial');
+      return true;
+    }
+  }
   return false;
 }
 
 async function api(path, options = {}, retryWithOfficial = true) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
-  const base = normalizedApiBase();
-  const primaryUrl = apiUrl(path);
-  const pathWithSlash = path.startsWith('/') ? path : `/${path}`;
-  const fallbacks = [];
-  if (base && OFFICIAL_PRODUCTION_API !== base) {
-    fallbacks.push(`${OFFICIAL_PRODUCTION_API}${pathWithSlash}`);
-  }
-  for (const prodBase of KNOWN_PRODUCTION_APIS) {
-    const url = `${prodBase}${pathWithSlash}`;
-    if (!fallbacks.includes(url)) fallbacks.push(url);
-  }
-  if (base) {
-    fallbacks.push(path);
+  const method = String(options.method || 'GET').toUpperCase();
+  const pathWithSlash = sanitizeApiPath(path);
+  const base = normalizedApiBase() || OFFICIAL_PRODUCTION_API;
+  const finalUrl = /^https?:\/\//i.test(pathWithSlash) ? pathWithSlash : `${base}${pathWithSlash}`;
+
+  if (shouldDebugApiLogs()) {
+    console.info(`[PardoGo API] request method=${method} url=${finalUrl}`);
   }
 
-  async function fetchCandidate(url) {
-    const response = await fetch(url, { ...options, headers });
-    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-    const declaredJson = contentType.includes('application/json');
-    let data = null;
-    let text = '';
-    if (declaredJson) {
-      data = await response.json();
-    } else {
-      text = await response.text();
-      const trimmed = text.trim();
-      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-        try {
-          data = JSON.parse(trimmed);
-        } catch {}
-      }
+  try {
+    const response = await fetch(finalUrl, { ...options, method, headers });
+    const data = await response.json().catch(() => ({}));
+
+    if (shouldDebugApiLogs()) {
+      console.info(`[PardoGo API] response method=${method} status=${response.status} url=${finalUrl}`);
     }
-    return { url, response, isJson: Boolean(data), data, text };
-  }
 
-  const candidates = [primaryUrl, ...fallbacks.filter(url => url !== primaryUrl)];
-  const attempts = [];
-
-  for (const candidate of candidates) {
-    try {
-      const result = await fetchCandidate(candidate);
-      attempts.push(result);
-
-      if (!result.isJson) {
-        // URL alcançável, mas sem API JSON (normalmente HTML de domínio errado).
-        continue;
-      }
-
-      if (!result.response.ok) {
-        const apiError = new Error(result.data?.error || result.data?.message || 'Erro na solicitação.');
-        apiError.isApiError = true;
-        throw apiError;
-      }
-
-      if (candidate.startsWith('http')) {
-        const matchedBase = KNOWN_PRODUCTION_APIS.find(item => candidate.startsWith(item));
-        const resolvedBase = matchedBase || (() => {
-          try { return new URL(candidate).origin; } catch { return ''; }
-        })();
-        if (resolvedBase && resolvedBase !== normalizedApiBase()) {
-          state.apiBaseUrl = resolvedBase;
-          localStorage.setItem('pardogo_api_base', resolvedBase);
-          renderApiBaseStatus();
-        }
-      }
-
-      return result.data;
-    } catch (error) {
-      if (error?.isApiError) throw error;
-      attempts.push({ url: candidate, networkError: error });
+    if (!response.ok) {
+      const error = new Error(classifyHttpErrorMessage(response.status, data));
+      error.isHttpError = true;
+      error.status = response.status;
+      error.data = data;
+      throw error;
     }
-  }
 
-  const hadNetworkFailure = attempts.some(item => item.networkError);
-  const hadNonJsonResponse = attempts.some(item => item.response && !item.isJson);
-
-  if (hadNonJsonResponse) {
-    if (retryWithOfficial && base && base !== OFFICIAL_PRODUCTION_API) {
-      state.apiBaseUrl = OFFICIAL_PRODUCTION_API;
-      localStorage.setItem('pardogo_api_base', OFFICIAL_PRODUCTION_API);
-      renderApiBaseStatus();
-      return api(path, options, false);
+    return data;
+  } catch (error) {
+    if (error?.isHttpError) throw error;
+    if (shouldDebugApiLogs()) {
+      console.warn(`[PardoGo API] network-error method=${method} url=${finalUrl} error=${error?.name || 'Error'}`);
     }
     if (retryWithOfficial) {
-      state.apiBaseUrl = OFFICIAL_PRODUCTION_API;
-      localStorage.setItem('pardogo_api_base', OFFICIAL_PRODUCTION_API);
-      renderApiBaseStatus();
-      return api(path, options, false);
+      const recovered = await diagnoseAndRecoverApiBase();
+      if (recovered) return api(pathWithSlash, options, false);
     }
+    throw new Error('Não foi possível conectar à API.');
   }
-
-  if (hadNetworkFailure) {
-    const target = base || OFFICIAL_PRODUCTION_API || 'mesma origem';
-    throw new Error(`Falha de conexão com o servidor (${target}). Verifique internet, URL da API e se o backend está online.`);
-  }
-
-  throw new Error('Erro na comunicação com a API.');
 }
 
 function isValidUserPayload(user) {
@@ -1780,15 +1863,33 @@ function wireAddressAutocomplete() {
   destinationInput?.addEventListener('blur', () => { applyKnownSuggestion('destination'); });
 }
 
-function setApiBaseUrl(value) {
-  const url = normalizeKnownApiBase(value);
-  if (url && !/^https?:\/\//i.test(url)) {
-    throw new Error('Informe uma URL começando com http:// ou https://.');
+async function setApiBaseUrl(value) {
+  const requireHttps = isProductionStage();
+  const normalized = normalizeKnownApiBase(value, { requireHttps });
+  if (normalized === null) {
+    throw new Error('Informe uma URL válida começando com http:// ou https://.');
   }
-  state.apiBaseUrl = url;
-  if (url) localStorage.setItem('pardogo_api_base', url);
-  else localStorage.removeItem('pardogo_api_base');
+
+  let target = normalized;
+  if (!target && isProductionStage()) {
+    target = OFFICIAL_PRODUCTION_API;
+  }
+  if (target && isProductionStage() && isLocalOrigin(target)) {
+    throw new Error('Em produção, use uma URL HTTPS pública da API.');
+  }
+
+  if (target) {
+    const health = await checkApiHealth(target);
+    if (!health.ok) {
+      throw new Error('A URL informada não respondeu /api/health com ok=true.');
+    }
+  }
+
+  state.apiBaseUrl = target;
+  if (target) localStorage.setItem(API_BASE_STORAGE_KEY, target);
+  else localStorage.removeItem(API_BASE_STORAGE_KEY);
   renderApiBaseStatus();
+  logApiSelection('manual');
   disconnectRealtime();
   if (state.token) connectRealtime().catch(() => {});
 }
@@ -1796,6 +1897,15 @@ function setApiBaseUrl(value) {
 function wireEvents() {
   renderApiBaseStatus();
   wireAddressAutocomplete();
+
+  if (!API_SETUP_ENABLED) {
+    $('#apiBaseForm')?.classList.add('hidden');
+    const status = $('#apiBaseStatus');
+    if (status) {
+      status.textContent = `Modo atual: ${apiModeLabel()}. Alteração manual de API desativada neste build.`;
+      status.className = 'form-status muted';
+    }
+  }
 
   if (MOBILE_APP_CONFIG.adminOnlyApk) {
     $('#openRegisterBtn')?.classList.add('hidden');
@@ -1808,10 +1918,11 @@ function wireEvents() {
   wirePhoneInput('#loginForm input[name="phone"]', true);
   wirePhoneInput('#registerForm input[name="phone"]', false);
 
-  $('#apiBaseForm')?.addEventListener('submit', event => {
+  $('#apiBaseForm')?.addEventListener('submit', async event => {
+    if (!API_SETUP_ENABLED) return toast('Alteração manual de API desativada neste build.', 'error');
     event.preventDefault();
     try {
-      setApiBaseUrl(event.currentTarget.elements.apiBaseUrl.value);
+      await setApiBaseUrl(event.currentTarget.elements.apiBaseUrl.value);
       toast(`Configuração salva: ${apiModeLabel()}.`, 'ok');
     } catch (error) {
       toast(error.message, 'error');
@@ -1819,9 +1930,14 @@ function wireEvents() {
     }
   });
 
-  $('#clearApiBaseBtn')?.addEventListener('click', () => {
-    setApiBaseUrl('');
-    toast('App configurado para usar API local/mesmo domínio.', 'ok');
+  $('#clearApiBaseBtn')?.addEventListener('click', async () => {
+    if (!API_SETUP_ENABLED) return toast('Alteração manual de API desativada neste build.', 'error');
+    try {
+      await setApiBaseUrl('');
+      toast('Configuração da API redefinida com sucesso.', 'ok');
+    } catch (error) {
+      toast(error.message, 'error');
+    }
   });
 
   $('#pixCopyBtn')?.addEventListener('click', async () => {
@@ -2009,13 +2125,19 @@ function wireEvents() {
       body.routeSource = state.currentRoute?.source || 'manual';
       body.routeGeometry = state.currentRoute?.geometry || null;
       body.useRoute = Boolean(origin && destination);
+      if (!state.pendingRideIdempotencyKey) {
+        state.pendingRideIdempotencyKey = buildRideIdempotencyKey();
+      }
+      body.idempotencyKey = state.pendingRideIdempotencyKey;
       const data = await api('/api/rides', { method: 'POST', body: JSON.stringify(body) });
+      state.pendingRideIdempotencyKey = null;
       toast(`${data.message} Valor: ${money(data.ride.fare)}`, 'ok');
       if (body.paymentMethod === 'Saldo do app') {
         await loadWallet().catch(() => {});
       }
       await refreshActiveArea();
     } catch (error) {
+      // Mantem a chave para retries em caso de falha de rede sem duplicar corrida.
       toast(error.message, 'error');
     }
   });
@@ -2284,6 +2406,10 @@ function wireEvents() {
 async function boot() {
   wireEvents();
   initGoogleAuth();
+  if (state.token && shouldForceLoginLanding()) {
+    clearSession();
+    console.info('[PardoGo Auth] Sessao persistida ignorada no carregamento inicial.');
+  }
   try {
     await ensureWorkingApiBase();
     await loadMapDefaults();

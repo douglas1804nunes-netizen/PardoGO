@@ -8,3 +8,9 @@ data/*.sqlite-wal
 android/keystore.properties
 *.jks
 *.keystore
+android/local.properties
+android/.gradle/
+android/app/build/
+android/build/
+.idea/
+*.iml

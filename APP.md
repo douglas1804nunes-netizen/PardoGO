@@ -1,110 +1,57 @@
 # App Android - PardoGo Etapa 14
 
-A Etapa 14 prepara o PardoGo para virar aplicativo Android usando Capacitor.
+## Arquitetura mobile
 
-## Decisão técnica
+O app Android usa Capacitor 7 com frontend da pasta `public`.
 
-O app Android será uma casca nativa que abre o front-end da pasta `public`. Os dados continuam no backend Node.js com SQLite, preferencialmente publicado online com HTTPS.
+Fluxo:
 
-Fluxo recomendado:
+App Android -> API HTTPS -> backend Node.js -> SQLite persistente no Render.
 
-```text
-App Android -> API online HTTPS -> Backend Node.js -> SQLite no servidor
-```
+## Configuração usada em produção
 
-Não use o banco local do celular para a operação principal, porque passageiro, motorista e admin precisam compartilhar os mesmos dados em tempo real.
+Em `public/mobile-config.js`:
 
-## 1. Coloque o backend online
+- `apiBaseUrl: 'https://pardogo-8yn0.onrender.com'`
+- `appStage: 'production'`
+- `enableApiSetupScreen: false`
 
-Antes do app real, publique o backend com HTTPS. Consulte `DEPLOY.md`.
+Isso evita que build release use endpoint local ou permita troca manual de backend por usuário final.
 
-Exemplo de API:
+## Geolocalização
 
-```text
-https://api.pardogo.com.br
-```
+Implementação atual usa `navigator.geolocation` (Web API).
 
-## 2. Configure a URL da API no app
+- `capacitor.config.json` mantém `androidScheme: "https"`.
+- Android Manifest já inclui:
+  - `INTERNET`
+  - `ACCESS_COARSE_LOCATION`
+  - `ACCESS_FINE_LOCATION`
+  - `ACCESS_NETWORK_STATE`
 
-Edite `public/mobile-config.js`:
+Plugin nativo `@capacitor/geolocation` nao é usado no código atual.
 
-```js
-window.PARDOGO_MOBILE_CONFIG = {
-  apiBaseUrl: 'https://api.seudominio.com',
-  appStage: 'production',
-  enableApiSetupScreen: true
-};
-```
-
-Durante teste local, pode deixar vazio:
-
-```js
-apiBaseUrl: ''
-```
-
-## 3. Instale dependências
+## Comandos principais
 
 ```bash
-npm install
-```
-
-## 4. Faça o checklist mobile
-
-```bash
+npm ci
+npx cap --version
+npx cap doctor
 npm run mobile:check
+npx cap sync android
 ```
 
-## 5. Gere o Android
+Build debug no Windows:
 
 ```bash
-npm run cap:add:android
+cd android
+gradlew.bat assembleDebug
 ```
 
-Se a pasta `android` já existir em uma continuação futura, use apenas:
+## Verificação de sync
 
-```bash
-npm run cap:sync:android
-```
+Após `npx cap sync android`, confirme o arquivo copiado:
 
-## 6. Abra no Android Studio
+- `android/app/src/main/assets/public/mobile-config.js`
 
-```bash
-npm run cap:open:android
-```
-
-No Android Studio:
-
-1. Espere o Gradle carregar.
-2. Escolha um emulador ou celular físico.
-3. Clique em Run.
-4. Teste login, mapa, localização e tempo real.
-
-## 7. Permissões Android
-
-Confira `mobile/android-permissions.md`.
-
-Permissões esperadas:
-
-```xml
-<uses-permission android:name="android.permission.INTERNET" />
-<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-```
-
-## 8. Pontos críticos para testar
-
-- Login do admin.
-- Cadastro do passageiro.
-- Cadastro do motorista.
-- Aprovação de motorista pelo admin.
-- Motorista online.
-- Passageiro pedindo corrida.
-- Motorista recebendo corrida em tempo real.
-- Geolocalização no celular.
-- Mapa carregando com internet móvel.
-- Botões de WhatsApp e ligação.
-- Cancelamento e avaliação.
-
-## 9. Próxima etapa sugerida
-
-Etapa 15: preparar publicação Android, com ícones finais, splash screen, nome comercial, assinatura do APK/AAB e checklist Google Play.
+Deve manter `apiBaseUrl` de produção HTTPS e `enableApiSetupScreen: false`.
