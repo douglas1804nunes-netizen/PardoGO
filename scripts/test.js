@@ -7,8 +7,8 @@ const ROOT = path.join(__dirname, '..');
 const DB = path.join(ROOT, 'data', 'pardogo-test.sqlite');
 const PORT = 5199;
 const BASE = `http://localhost:${PORT}`;
-const ADMIN_PHONE = '67999281729';
-const ADMIN_PASSWORD = ',Duarte1052';
+const ADMIN_PHONE = '67990000001';
+const ADMIN_PASSWORD = 'Admin#PardoGo123';
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));

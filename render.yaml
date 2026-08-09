@@ -16,9 +16,9 @@ services:
       - key: DB_PATH
         value: /var/data/pardogo.sqlite
       - key: ADMIN_INITIAL_PHONE
-        value: "67999281729"
+        sync: false
       - key: ADMIN_INITIAL_PASSWORD
-        value: ",Duarte1052"
+        sync: false
       - key: FORCE_HTTPS
         value: "1"
       - key: TRUST_PROXY

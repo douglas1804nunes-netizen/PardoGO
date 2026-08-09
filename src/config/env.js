@@ -207,11 +207,11 @@ function getEnvConfig(overrides = {}) {
   const DB_PATH = String(env.DB_PATH || path.join(projectRoot, 'data', 'pardogo.sqlite')).trim();
   const ADMIN_INITIAL_PHONE = String(
     env.ADMIN_INITIAL_PHONE ||
-    (isProduction ? '' : '67999281729')
+    (isProduction ? '' : '67990000000')
   ).trim();
   const ADMIN_INITIAL_PASSWORD = String(
     env.ADMIN_INITIAL_PASSWORD ||
-    (isProduction ? '' : ',Duarte1052')
+    (isProduction ? '' : 'DevOnly#PardoGo1')
   ).trim();
   const CORS_ORIGIN = String(env.CORS_ORIGIN || '').trim();
   const SESSION_DAYS = toNumber(env.SESSION_DAYS, 7);
