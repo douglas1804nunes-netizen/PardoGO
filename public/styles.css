@@ -738,7 +738,6 @@ button:disabled { opacity: .62; cursor: not-allowed; transform: none; }
 .item header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
 .item strong { display: block; }
 .item small { display: block; line-height: 1.45; }
-.wallet-tx-item { padding-block: 14px; }
 .cancel-note {
   display: block;
   margin-top: 8px;

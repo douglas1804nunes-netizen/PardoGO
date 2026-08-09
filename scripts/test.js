@@ -7,8 +7,8 @@ const ROOT = path.join(__dirname, '..');
 const DB = path.join(ROOT, 'data', 'pardogo-test.sqlite');
 const PORT = 5199;
 const BASE = `http://localhost:${PORT}`;
-const ADMIN_PHONE = '67990000001';
-const ADMIN_PASSWORD = 'Admin#PardoGo123';
+const ADMIN_PHONE = '67999281729';
+const ADMIN_PASSWORD = ',Duarte1052';
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -252,21 +252,8 @@ async function run() {
       body: JSON.stringify({ phone: '67911110000', password: testPassword })
     });
 
-    const walletBeforeTopup = await request('/api/wallet', {
-      headers: { Authorization: `Bearer ${passengerLogin.token}` }
-    });
-    const topupCash = await request('/api/wallet/topup', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${passengerLogin.token}` },
-      body: JSON.stringify({ amount: 80, method: 'Dinheiro' })
-    });
-    if (Number(topupCash.balance || 0) <= Number(walletBeforeTopup.balance || 0)) {
-      throw new Error('Recarga em dinheiro não creditou saldo.');
-    }
-
     const idempotencyKey = `ride-test-${Date.now()}`;
-    const balanceBeforeSaldoRide = Number(topupCash.balance || 0);
-    const saldoRideFirst = await request('/api/rides', {
+    const pixRideFirst = await request('/api/rides', {
       method: 'POST',
       headers: { Authorization: `Bearer ${passengerLogin.token}` },
       body: JSON.stringify({
@@ -274,16 +261,13 @@ async function run() {
         destination: 'Praca Central',
         distanceKm: 1.8,
         minutes: 6,
-        paymentMethod: 'Saldo do app',
+        paymentMethod: 'Pix',
         idempotencyKey,
         useRoute: false
       })
     });
-    const walletAfterFirstSaldoRide = await request('/api/wallet', {
-      headers: { Authorization: `Bearer ${passengerLogin.token}` }
-    });
 
-    const saldoRideRetry = await request('/api/rides', {
+    const pixRideRetry = await request('/api/rides', {
       method: 'POST',
       headers: { Authorization: `Bearer ${passengerLogin.token}` },
       body: JSON.stringify({
@@ -291,23 +275,14 @@ async function run() {
         destination: 'Praca Central',
         distanceKm: 1.8,
         minutes: 6,
-        paymentMethod: 'Saldo do app',
+        paymentMethod: 'Pix',
         idempotencyKey,
         useRoute: false
       })
     });
-    const walletAfterRetrySaldoRide = await request('/api/wallet', {
-      headers: { Authorization: `Bearer ${passengerLogin.token}` }
-    });
 
-    if (saldoRideFirst.ride.id !== saldoRideRetry.ride.id) {
+    if (pixRideFirst.ride.id !== pixRideRetry.ride.id) {
       throw new Error('Idempotência de corrida não retornou a mesma corrida no retry.');
-    }
-    if (Number(walletAfterRetrySaldoRide.balance || 0) !== Number(walletAfterFirstSaldoRide.balance || 0)) {
-      throw new Error('Retry idempotente debitou saldo novamente.');
-    }
-    if (Number(walletAfterFirstSaldoRide.balance || 0) >= balanceBeforeSaldoRide) {
-      throw new Error('Corrida com Saldo do app não debitou carteira.');
     }
 
     const concurrentKey = `ride-concurrent-${Date.now()}`;
@@ -336,7 +311,7 @@ async function run() {
       throw new Error('Concorrência com mesma idempotencyKey criou corridas duplicadas.');
     }
 
-    const insufficient = await requestRaw('/api/rides', {
+    const invalidPayment = await requestRaw('/api/rides', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${passengerLogin.token}`,
@@ -345,15 +320,15 @@ async function run() {
       body: JSON.stringify({
         origin: 'Zona Rural',
         destination: 'Centro',
-        distanceKm: 999,
-        minutes: 999,
+        distanceKm: 5,
+        minutes: 15,
         paymentMethod: 'Saldo do app',
-        idempotencyKey: `ride-insufficient-${Date.now()}`,
+        idempotencyKey: `ride-invalid-payment-${Date.now()}`,
         useRoute: false
       })
     });
-    if (insufficient.response.status !== 400 || !String(insufficient.data.error || '').includes('Saldo insuficiente')) {
-      throw new Error('Saldo insuficiente deveria retornar 400 sem criar corrida.');
+    if (invalidPayment.response.status !== 400 || !String(invalidPayment.data.error || '').includes('Forma de pagamento inválida')) {
+      throw new Error('Pagamento Saldo do app deveria ser rejeitado com erro de validação.');
     }
 
     const driverStream = await openSse(driverLogin.token);
@@ -486,40 +461,6 @@ async function run() {
     const passengerCancelledEvent = await passengerStream.waitFor('ride-update', payload => payload.type === 'cancelled' && payload.ride?.id === rideToCancel.ride.id);
     if (passengerCancelledEvent.ride.status !== 'cancelled' || !passengerCancelledEvent.ride.cancelReason) throw new Error('Cancelamento não foi emitido/salvo.');
 
-    const walletBeforeRefundRide = await request('/api/wallet', {
-      headers: { Authorization: `Bearer ${passengerLogin.token}` }
-    });
-    const refundableRide = await request('/api/rides', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${passengerLogin.token}` },
-      body: JSON.stringify({
-        origin: 'Padaria',
-        destination: 'Igreja',
-        distanceKm: 1.3,
-        minutes: 5,
-        paymentMethod: 'Saldo do app',
-        idempotencyKey: `ride-refund-${Date.now()}`,
-        useRoute: false
-      })
-    });
-    const walletAfterRefundableCreate = await request('/api/wallet', {
-      headers: { Authorization: `Bearer ${passengerLogin.token}` }
-    });
-    if (Number(walletAfterRefundableCreate.balance || 0) >= Number(walletBeforeRefundRide.balance || 0)) {
-      throw new Error('Corrida de estorno não debitou saldo antes do cancelamento.');
-    }
-    await request(`/api/rides/${refundableRide.ride.id}/cancel`, {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${passengerLogin.token}` },
-      body: JSON.stringify({ reason: 'Cancelar para estorno de teste' })
-    });
-    const walletAfterRefund = await request('/api/wallet', {
-      headers: { Authorization: `Bearer ${passengerLogin.token}` }
-    });
-    if (Number(walletAfterRefund.balance || 0) !== Number(walletBeforeRefundRide.balance || 0)) {
-      throw new Error('Estorno de corrida cancelada não devolveu saldo corretamente.');
-    }
-
     const legal = await request('/api/legal');
     if (!legal.legal?.terms?.items?.length || !legal.legal?.privacy?.items?.length) throw new Error('Conteúdo legal não foi retornado.');
 
@@ -539,33 +480,6 @@ async function run() {
 
     driverStream.close();
     passengerStream.close();
-
-    const walletBeforePixConfirm = await request('/api/wallet', {
-      headers: { Authorization: `Bearer ${passengerLogin.token}` }
-    });
-    const pixTopup = await request('/api/wallet/topup', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${passengerLogin.token}` },
-      body: JSON.stringify({ amount: 15, method: 'Pix' })
-    });
-    if (!pixTopup.pendingPix?.id) throw new Error('Recarga PIX pendente não foi criada.');
-    await request(`/api/admin/wallet/pix/${pixTopup.pendingPix.id}/confirm`, {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${adminLogin.token}` },
-      body: JSON.stringify({ approve: true, note: 'confirmacao teste' })
-    });
-    await request(`/api/admin/wallet/pix/${pixTopup.pendingPix.id}/confirm`, {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${adminLogin.token}` },
-      body: JSON.stringify({ approve: true, note: 'confirmacao duplicada' })
-    });
-    const walletAfterPixConfirm = await request('/api/wallet', {
-      headers: { Authorization: `Bearer ${passengerLogin.token}` }
-    });
-    const expectedAfterPix = Number((Number(walletBeforePixConfirm.balance || 0) + 15).toFixed(2));
-    if (Number(walletAfterPixConfirm.balance || 0) !== expectedAfterPix) {
-      throw new Error('Confirmação PIX duplicada alterou saldo de forma incorreta.');
-    }
 
     const dashboard = await request('/api/admin/dashboard', {
       headers: { Authorization: `Bearer ${adminLogin.token}` }

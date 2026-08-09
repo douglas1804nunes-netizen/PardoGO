@@ -31,13 +31,12 @@
 - [ ] `node --check server.js` OK
 - [ ] `/api/health` com probe SQLite real
 
-## Wallet / rides / PIX
+## Pagamentos / rides
 
 - [ ] criação de corrida com idempotência validada
 - [ ] retry não cria corrida duplicada
-- [ ] pagamento com Saldo do app atômico
-- [ ] cancelamento com estorno atômico
-- [ ] confirmação PIX duplicada não duplica crédito
+- [ ] pagamento aceitando apenas Pix e Dinheiro
+- [ ] endpoint legado de webhook PIX desativado (404)
 
 ## SSE / sessão
 

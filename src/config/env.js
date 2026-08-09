@@ -130,8 +130,6 @@ function validateEnvConfig(overrides = {}) {
   const adminPassword = String(env.ADMIN_INITIAL_PASSWORD || '');
   const corsOrigins = parseCorsOrigins(env.CORS_ORIGIN);
   const requireSecureEnv = parseBoolean(env.REQUIRE_SECURE_ENV, false);
-  const pixWebhookEnabled = parseBoolean(env.PIX_WEBHOOK_ENABLED, false);
-  const pixWebhookSecret = String(env.PIX_WEBHOOK_SECRET || '').trim();
 
   if (!appBaseUrl) {
     if (isProduction) errors.push('APP_BASE_URL é obrigatório em produção.');
@@ -188,10 +186,6 @@ function validateEnvConfig(overrides = {}) {
     errors.push('TRUST_PROXY=1 é obrigatório em produção.');
   }
 
-  if (isProduction && pixWebhookEnabled && !pixWebhookSecret) {
-    warnings.push('PIX_WEBHOOK_SECRET é obrigatório quando PIX_WEBHOOK_ENABLED=1.');
-  }
-
   if (isProduction && !requireSecureEnv) {
     warnings.push('REQUIRE_SECURE_ENV=1 recomendado em produção para bloquear boot inseguro.');
   }
@@ -211,8 +205,14 @@ function getEnvConfig(overrides = {}) {
   const APP_BASE_URL = String(env.APP_BASE_URL || 'https://pardogo-8yn0.onrender.com').trim();
   const CANONICAL_BASE_URL = String(env.CANONICAL_BASE_URL || APP_BASE_URL).trim();
   const DB_PATH = String(env.DB_PATH || path.join(projectRoot, 'data', 'pardogo.sqlite')).trim();
-  const ADMIN_INITIAL_PHONE = String(env.ADMIN_INITIAL_PHONE || '67990000000').trim();
-  const ADMIN_INITIAL_PASSWORD = String(env.ADMIN_INITIAL_PASSWORD || 'DevOnly#PardoGo1').trim();
+  const ADMIN_INITIAL_PHONE = String(
+    env.ADMIN_INITIAL_PHONE ||
+    (isProduction ? '' : '67999281729')
+  ).trim();
+  const ADMIN_INITIAL_PASSWORD = String(
+    env.ADMIN_INITIAL_PASSWORD ||
+    (isProduction ? '' : ',Duarte1052')
+  ).trim();
   const CORS_ORIGIN = String(env.CORS_ORIGIN || '').trim();
   const SESSION_DAYS = toNumber(env.SESSION_DAYS, 7);
   const DRIVER_LOCATION_STALE_SECONDS = toNumber(env.DRIVER_LOCATION_STALE_SECONDS, 120);
@@ -229,13 +229,7 @@ function getEnvConfig(overrides = {}) {
   const MAP_TIMEOUT_MS = toNumber(env.MAP_TIMEOUT_MS, 5500);
   const SSE_PING_MS = toNumber(env.SSE_PING_MS, 25000);
   const SSE_TICKET_TTL_MS = toNumber(env.SSE_TICKET_TTL_MS, 60_000);
-  const PIX_WEBHOOK_SECRET = String(env.PIX_WEBHOOK_SECRET || '').trim();
-  const PIX_WEBHOOK_ENABLED = parseBoolean(env.PIX_WEBHOOK_ENABLED, false);
   const GOOGLE_CLIENT_ID = String(env.GOOGLE_CLIENT_ID || '').trim();
-  const PIX_KEY = String(env.PIX_KEY || ADMIN_INITIAL_PHONE || '').trim();
-  const PIX_MERCHANT_NAME = String(env.PIX_MERCHANT_NAME || 'PARDOGO').trim();
-  const PIX_MERCHANT_CITY = String(env.PIX_MERCHANT_CITY || 'SANTA RITA DO PARDO').trim();
-  const PIX_DESCRIPTION = String(env.PIX_DESCRIPTION || 'RECARGA PARDOGO').trim();
   const CORS_ALLOWED_ORIGINS = normalizeList(CORS_ORIGIN, [APP_BASE_URL]);
   return {
     NODE_ENV,
@@ -260,12 +254,6 @@ function getEnvConfig(overrides = {}) {
     MAP_TIMEOUT_MS,
     SSE_PING_MS,
     SSE_TICKET_TTL_MS,
-    PIX_KEY,
-    PIX_MERCHANT_NAME,
-    PIX_MERCHANT_CITY,
-    PIX_DESCRIPTION,
-    PIX_WEBHOOK_SECRET,
-    PIX_WEBHOOK_ENABLED,
     GOOGLE_CLIENT_ID,
     CORS_ORIGIN,
     CORS_ALLOWED_ORIGINS,

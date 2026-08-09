@@ -28,10 +28,6 @@ Defina no Dashboard Render (sem commitar valores):
 - `ADMIN_INITIAL_PASSWORD` (forte, sem placeholder)
 - `CORS_ORIGIN=https://pardogo-8yn0.onrender.com,https://localhost`
 
-Para PIX webhook:
-
-- `PIX_WEBHOOK_SECRET` (obrigatório se webhook habilitado)
-
 ## Regras de segurança de deploy
 
 - Nunca usar `CORS_ORIGIN=*` em produção.
@@ -54,9 +50,8 @@ Validações manuais mínimas:
 2. Cadastro/login passageiro.
 3. Cadastro/aprovação/login motorista.
 4. Corrida: criar -> aceitar -> finalizar.
-5. Corrida com Saldo do app + cancelamento com estorno.
-6. SSE funcionando para passageiro e motorista.
-7. CORS aceitando apenas origens permitidas.
+5. SSE funcionando para passageiro e motorista.
+6. CORS aceitando apenas origens permitidas.
 
 ## Android em produção
 

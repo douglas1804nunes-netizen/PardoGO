@@ -36,13 +36,11 @@ Android Capacitor / PWA -> API HTTPS -> backend Node.js -> SQLite persistente no
 - Em Render: `/var/data/pardogo.sqlite` (disco persistente).
 - Migrations retrocompatíveis em bootstrap.
 
-## Wallet / PIX / Corridas
+## Pagamento / Corridas
 
-- Operações financeiras compostas usam transação SQLite (`BEGIN IMMEDIATE`, `COMMIT`, `ROLLBACK`).
-- Criação de corrida com `Saldo do app` ocorre de forma atômica (cria corrida + debita carteira + ledger).
-- Cancelamento com estorno também é atômico.
+- Formas de pagamento suportadas: `Pix` e `Dinheiro`.
+- A plataforma não mantém carteira interna nem recarga PIX com confirmação administrativa.
 - Idempotência real de corrida por `idempotencyKey` vinculada a `passenger_id` com índice `UNIQUE`.
-- Confirmação PIX protegida por segredo e crédito idempotente.
 
 ## Render
 

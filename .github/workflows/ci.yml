@@ -33,11 +33,14 @@ jobs:
       - name: Run doctor
         run: npm run doctor
 
-      - name: Check Capacitor CLI
+      - name: Check Capacitor
         run: npx cap --version
 
-      - name: Run Capacitor doctor
+      - name: Sync Android
+        run: npx cap sync android
+
+      - name: Capacitor doctor
         run: npx cap doctor
 
-      - name: Run mobile checks
+      - name: Mobile checks
         run: npm run mobile:check

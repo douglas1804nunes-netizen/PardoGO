@@ -33,10 +33,7 @@ Este documento é um roteiro de execução. Marque apenas após validar no ambie
 - [ ] Cancelamento da corrida
 - [ ] Pagamento Dinheiro
 - [ ] Pagamento PIX
-- [ ] Pagamento Saldo do app
-- [ ] Saldo insuficiente bloqueia corrida
 - [ ] Retry com mesma idempotencyKey não duplica corrida
-- [ ] Estorno de corrida cancelada
 - [ ] SSE (criação/aceite/finalização/cancelamento)
 - [ ] Logout e login novamente
 - [ ] CORS e preflight
@@ -51,7 +48,7 @@ Este documento é um roteiro de execução. Marque apenas após validar no ambie
 
 ## 5. Critérios de aceite
 
-- [ ] Sem inconsistência financeira (débito/estorno/ledger)
+- [ ] Sem regressão de criação, aceite, finalização e cancelamento de corridas
 - [ ] Sem duplicidade de corrida por retry/concorrência
 - [ ] Sem segredos expostos em logs, docs ou Git
 - [ ] Sem regressão crítica de fluxo passageiro/motorista/admin

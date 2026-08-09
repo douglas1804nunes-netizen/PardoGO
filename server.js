@@ -444,7 +444,7 @@ function seed() {
       status: 'active'
     });
     insertUser(adminUser);
-  } else if (admin.role !== 'admin' || admin.status !== 'active') {
+  } else {
     db.prepare(`
       UPDATE users
       SET role = 'admin',
@@ -472,6 +472,12 @@ function seed() {
       demotedAdmins: otherAdmins.map(item => item.phone)
     });
   }
+
+  try {
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_single_admin_role ON users(role) WHERE role = 'admin';");
+  } catch (error) {
+    console.warn(`Aviso: não foi possível reforçar índice de admin único: ${error.message}`);
+  }
 }
 
 function nowIso() {
@@ -481,16 +487,12 @@ function nowIso() {
 function normalizePhone(phone) {
   const raw = String(phone || '').trim().toLowerCase();
   if (!raw) return '';
-  if (raw === ADMIN_LEGACY_ALIAS) {
-    return NODE_ENV !== 'production' ? ADMIN_INITIAL_PHONE : '';
-  }
   const digits = raw.replace(/\D/g, '');
   if (digits && digits === ADMIN_INITIAL_PHONE) return ADMIN_INITIAL_PHONE;
   return digits;
 }
 
 function isValidPhone(phone) {
-  if (NODE_ENV !== 'production' && phone === ADMIN_LEGACY_ALIAS) return true;
   if (phone === ADMIN_INITIAL_PHONE) return true;
   return /^\d{10,13}$/.test(phone);
 }
@@ -2018,7 +2020,6 @@ async function handleApi(req, res, url) {
       const body = await parseBody(req);
       const missing = validateRequired(['phone', 'password'], body);
       if (missing) return send(res, 400, { ok: false, error: missing });
-      const rawPhoneInput = String(body.phone || '').trim().toLowerCase();
       const normalizedPhone = normalizePhone(body.phone);
       if (!isValidPhone(normalizedPhone)) {
         return send(res, 400, { ok: false, error: 'Informe um telefone válido com DDD.' });
@@ -2031,12 +2032,8 @@ async function handleApi(req, res, url) {
         }, { 'Retry-After': String(lockInfo.retryAfterSeconds) });
       }
       const user = getUserByPhone(normalizedPhone);
-      const legacyAdminLoginAllowed = NODE_ENV !== 'production'
-        && rawPhoneInput === ADMIN_LEGACY_ALIAS
-        && String(body.password || '') === '123456';
       const passwordValid = user
-        ? (verifyPassword(body.password, user.passwordHash)
-          || (legacyAdminLoginAllowed && user.role === 'admin' && user.phone === ADMIN_INITIAL_PHONE))
+        ? verifyPassword(body.password, user.passwordHash)
         : false;
       if (!user || !passwordValid) {
         noteLoginFailure(req, normalizedPhone);

@@ -27,20 +27,13 @@ Reporte falhas de segurança em canal privado. Não abra issue pública com segr
 	- `https://pardogo-8yn0.onrender.com`
 	- `https://localhost` (Capacitor com `androidScheme=https`)
 
-## PIX
-
-- Webhook exige segredo (`PIX_WEBHOOK_SECRET`).
-- Comparação de segredo com timing-safe compare.
-- Confirmação duplicada não pode gerar crédito duplicado.
-
 ## Sessão e SSE
 
 - Token de sessão não deve ir em query string por padrão.
 - SSE usa ticket de curta duração e consumo único.
 - No shutdown, conexões SSE e timers são encerrados.
 
-## Operações financeiras
+## Operações de corrida
 
-- Débito/crédito de carteira e eventos de corrida são transacionais.
-- Fluxos críticos usam `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`.
+- Fluxos críticos de corrida usam validação de transição de estado.
 - Idempotência de corrida vinculada ao passageiro evita duplicidade por retry.
