@@ -36,6 +36,9 @@ jobs:
       - name: Check Capacitor CLI
         run: npx cap --version
 
+      - name: Copy web assets to Android
+        run: npx cap copy android
+
       - name: Run Capacitor doctor
         run: npx cap doctor
 
