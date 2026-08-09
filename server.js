@@ -18,11 +18,11 @@ const APP_BASE_URL = envConfig.APP_BASE_URL;
 const CANONICAL_BASE_URL = envConfig.CANONICAL_BASE_URL || envConfig.APP_BASE_URL;
 const SESSION_DAYS = Number(envConfig.SESSION_DAYS || 7);
 const ADMIN_LEGACY_ALIAS = 'admin';
-const ADMIN_INITIAL_PHONE_RAW = String(envConfig.ADMIN_INITIAL_PHONE || ADMIN_LEGACY_ALIAS).trim().toLowerCase();
+const ADMIN_INITIAL_PHONE_RAW = String(envConfig.ADMIN_INITIAL_PHONE || '').trim().toLowerCase();
 const ADMIN_INITIAL_PHONE = ADMIN_INITIAL_PHONE_RAW === ADMIN_LEGACY_ALIAS
   ? ADMIN_LEGACY_ALIAS
   : ADMIN_INITIAL_PHONE_RAW.replace(/\D/g, '');
-const ADMIN_INITIAL_PASSWORD = String(envConfig.ADMIN_INITIAL_PASSWORD || 'troque-essa-senha-forte');
+const ADMIN_INITIAL_PASSWORD = String(envConfig.ADMIN_INITIAL_PASSWORD || '');
 const GOOGLE_CLIENT_ID = String(envConfig.GOOGLE_CLIENT_ID || '').trim();
 const FORCE_HTTPS = envConfig.FORCE_HTTPS === true;
 const TRUST_PROXY = envConfig.TRUST_PROXY === true;
@@ -73,13 +73,7 @@ const eventClients = new Map();
 const sseTickets = new Map();
 const SSE_PING_MS = Number(envConfig.SSE_PING_MS || 25000);
 const SSE_TICKET_TTL_MS = Number(envConfig.SSE_TICKET_TTL_MS || 60_000);
-const PAYMENT_METHODS = ['Pix', 'Dinheiro', 'Saldo do app'];
-const PIX_KEY = String(envConfig.PIX_KEY || ADMIN_INITIAL_PHONE || '').trim();
-const PIX_MERCHANT_NAME = String(envConfig.PIX_MERCHANT_NAME || 'PARDOGO').trim();
-const PIX_MERCHANT_CITY = String(envConfig.PIX_MERCHANT_CITY || 'SANTA RITA DO PARDO').trim();
-const PIX_DESCRIPTION = String(envConfig.PIX_DESCRIPTION || 'RECARGA PARDOGO').trim();
-const PIX_WEBHOOK_ENABLED = envConfig.PIX_WEBHOOK_ENABLED === true;
-const PIX_WEBHOOK_SECRET = String(envConfig.PIX_WEBHOOK_SECRET || '').trim();
+const PAYMENT_METHODS = ['Pix', 'Dinheiro'];
 
 const defaultTariffRules = {
   base: 5,
@@ -506,7 +500,6 @@ function normalizePaymentMethod(value) {
   const normalized = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   if (normalized === 'pix') return 'Pix';
   if (normalized === 'dinheiro') return 'Dinheiro';
-  if (['saldo', 'saldo do app', 'credito', 'credito do app', 'credito app'].includes(normalized)) return 'Saldo do app';
   return '';
 }
 
@@ -789,322 +782,6 @@ function normalizeIdempotencyKey(value) {
   return normalized;
 }
 
-function findWalletTransactionByIdempotency(idempotencyKey) {
-  if (!idempotencyKey) return null;
-  return db.prepare('SELECT id FROM wallet_transactions WHERE idempotency_key = ? LIMIT 1').get(String(idempotencyKey));
-}
-
-function creditWalletWithLedger({ userId, amount, method, description, referenceId = null, idempotencyKey = null, status = 'posted' }) {
-  const value = Number(Number(amount || 0).toFixed(2));
-  if (!Number.isFinite(value) || value <= 0) throw new Error('Informe um valor válido para crédito.');
-  const now = nowIso();
-  const updated = db.prepare('UPDATE users SET wallet_balance = ROUND(wallet_balance + ?, 2), updated_at = ? WHERE id = ?')
-    .run(value, now, userId);
-  if (!updated.changes) throw new Error('Usuário da carteira não encontrado.');
-  createWalletTransaction({
-    userId,
-    type: 'credit',
-    amount: value,
-    method,
-    description,
-    referenceId,
-    idempotencyKey,
-    status
-  });
-  return getWalletBalance(userId);
-}
-
-function debitWalletWithLedger({ userId, amount, method, description, referenceId = null, idempotencyKey = null, status = 'posted' }) {
-  const value = Number(Number(amount || 0).toFixed(2));
-  if (!Number.isFinite(value) || value <= 0) throw new Error('Valor de débito inválido.');
-  const now = nowIso();
-  const updated = db.prepare(`
-    UPDATE users
-    SET wallet_balance = ROUND(wallet_balance - ?, 2), updated_at = ?
-    WHERE id = ? AND wallet_balance >= ?
-  `).run(value, now, userId, value);
-  if (!updated.changes) {
-    const current = getWalletBalance(userId);
-    throw new Error(`Saldo insuficiente. Saldo atual: R$ ${current.toFixed(2)}.`);
-  }
-  createWalletTransaction({
-    userId,
-    type: 'debit',
-    amount: value,
-    method,
-    description,
-    referenceId,
-    idempotencyKey,
-    status
-  });
-  return getWalletBalance(userId);
-}
-
-function getWalletBalance(userId) {
-  const row = db.prepare('SELECT wallet_balance FROM users WHERE id = ?').get(userId);
-  return Number(Number(row?.wallet_balance || 0).toFixed(2));
-}
-
-function updateWalletBalance(userId, nextBalance) {
-  const amount = Number(Number(nextBalance || 0).toFixed(2));
-  db.prepare('UPDATE users SET wallet_balance = ?, updated_at = ? WHERE id = ?').run(amount, nowIso(), userId);
-}
-
-function createWalletTransaction({ userId, type, amount, method, description, referenceId, idempotencyKey, status = 'posted' }) {
-  const value = Number(Number(amount || 0).toFixed(2));
-  const id = crypto.randomUUID();
-  const createdAt = nowIso();
-  db.prepare(`
-    INSERT INTO wallet_transactions (id, user_id, type, amount, method, description, reference_id, idempotency_key, status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    id,
-    userId,
-    type,
-    value,
-    String(method || '').slice(0, 40),
-    String(description || '').slice(0, 220),
-    referenceId ? String(referenceId).slice(0, 80) : null,
-    idempotencyKey ? String(idempotencyKey).slice(0, 120) : null,
-    String(status || 'posted').slice(0, 20),
-    createdAt,
-    createdAt
-  );
-  return { id };
-}
-
-function getWalletTransactions(userId, limit = 20) {
-  return db.prepare('SELECT * FROM wallet_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT ?').all(userId, Number(limit || 20));
-}
-
-function walletReferenceExists(referenceId) {
-  if (!referenceId) return false;
-  const row = db.prepare('SELECT id FROM wallet_transactions WHERE reference_id = ? LIMIT 1').get(String(referenceId));
-  return Boolean(row?.id);
-}
-
-function sanitizePixName(value, max = 25) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toUpperCase()
-    .replace(/[^A-Z0-9 ]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, max) || 'PARDOGO';
-}
-
-function emvField(id, value) {
-  const text = String(value || '');
-  return `${id}${String(text.length).padStart(2, '0')}${text}`;
-}
-
-function crc16(payload) {
-  let crc = 0xFFFF;
-  for (let i = 0; i < payload.length; i += 1) {
-    crc ^= payload.charCodeAt(i) << 8;
-    for (let bit = 0; bit < 8; bit += 1) {
-      if ((crc & 0x8000) !== 0) crc = (crc << 1) ^ 0x1021;
-      else crc <<= 1;
-      crc &= 0xFFFF;
-    }
-  }
-  return crc.toString(16).toUpperCase().padStart(4, '0');
-}
-
-function generatePixPayload({ amount, txid }) {
-  if (!PIX_KEY) throw new Error('PIX_KEY não configurada para gerar cobrança PIX.');
-  const value = Number(Number(amount || 0).toFixed(2));
-  if (!Number.isFinite(value) || value <= 0) throw new Error('Valor PIX inválido.');
-
-  const merchantAccount = `${emvField('00', 'br.gov.bcb.pix')}${emvField('01', PIX_KEY)}${PIX_DESCRIPTION ? emvField('02', String(PIX_DESCRIPTION).slice(0, 99)) : ''}`;
-  const payloadWithoutCrc = [
-    emvField('00', '01'),
-    emvField('26', merchantAccount),
-    emvField('52', '0000'),
-    emvField('53', '986'),
-    emvField('54', value.toFixed(2)),
-    emvField('58', 'BR'),
-    emvField('59', sanitizePixName(PIX_MERCHANT_NAME, 25)),
-    emvField('60', sanitizePixName(PIX_MERCHANT_CITY, 15)),
-    emvField('62', emvField('05', String(txid || 'TOPUP').slice(0, 25)))
-  ].join('');
-
-  const withCrcHeader = `${payloadWithoutCrc}6304`;
-  return `${withCrcHeader}${crc16(withCrcHeader)}`;
-}
-
-function rowToPixTopup(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    userId: row.user_id,
-    amount: Number(Number(row.amount || 0).toFixed(2)),
-    status: row.status,
-    pixKey: row.pix_key,
-    pixPayload: row.pix_payload,
-    qrCodeUrl: row.qr_code_url,
-    txid: row.txid,
-    payerNote: row.payer_note || '',
-    adminNote: row.admin_note || '',
-    confirmedBy: row.confirmed_by || null,
-    confirmedAt: row.confirmed_at || null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  };
-}
-
-function createPixTopupRequest(userId, amount) {
-  const value = Number(Number(amount || 0).toFixed(2));
-  if (!Number.isFinite(value) || value <= 0) throw new Error('Informe um valor de recarga válido.');
-  const now = nowIso();
-  const id = crypto.randomUUID();
-  const txid = `PG${Date.now().toString(36).toUpperCase()}${Math.floor(Math.random() * 99).toString().padStart(2, '0')}`.slice(0, 25);
-  const pixPayload = generatePixPayload({ amount: value, txid });
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(pixPayload)}`;
-  db.prepare(`
-    INSERT INTO pix_topups (id, user_id, amount, status, pix_key, pix_payload, qr_code_url, txid, payer_note, admin_note, confirmed_by, confirmed_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, userId, value, 'pending', PIX_KEY, pixPayload, qrCodeUrl, txid, '', '', null, null, now, now);
-  return rowToPixTopup(db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(id));
-}
-
-function listPixTopupsByUser(userId, limit = 20) {
-  return db.prepare(`
-    SELECT * FROM pix_topups
-    WHERE user_id = ? AND status IN ('pending', 'awaiting_confirmation')
-    ORDER BY created_at DESC
-    LIMIT ?
-  `).all(userId, Number(limit || 20)).map(rowToPixTopup);
-}
-
-function listPendingPixTopupsForAdmin(limit = 200) {
-  return db.prepare(`
-    SELECT p.*, u.name AS user_name, u.phone AS user_phone
-    FROM pix_topups p
-    JOIN users u ON u.id = p.user_id
-    WHERE p.status IN ('pending', 'awaiting_confirmation')
-    ORDER BY p.created_at ASC
-    LIMIT ?
-  `).all(Number(limit || 200)).map(row => ({
-    ...rowToPixTopup(row),
-    userName: row.user_name,
-    userPhone: row.user_phone
-  }));
-}
-
-function markPixTopupPaidByUser(topupId, userId) {
-  const topup = db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(String(topupId || ''));
-  if (!topup || topup.user_id !== userId) return null;
-  if (!['pending', 'awaiting_confirmation'].includes(topup.status)) return rowToPixTopup(topup);
-  const updatedAt = nowIso();
-  db.prepare('UPDATE pix_topups SET status = ?, updated_at = ? WHERE id = ?').run('awaiting_confirmation', updatedAt, topup.id);
-  return rowToPixTopup(db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(topup.id));
-}
-
-function confirmPixTopupByAdmin(topupId, adminUserId, approve = true, adminNote = '') {
-  const rawTopupId = String(topupId || '').trim();
-  if (!rawTopupId) return null;
-
-  return withImmediateTransaction(() => {
-    const topup = db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(rawTopupId);
-    if (!topup) return null;
-    if (topup.status === 'confirmed' || topup.status === 'rejected') return rowToPixTopup(topup);
-
-    const now = nowIso();
-    const nextStatus = approve ? 'confirmed' : 'rejected';
-    const update = db.prepare(`
-      UPDATE pix_topups
-      SET status = ?, admin_note = ?, confirmed_by = ?, confirmed_at = ?, updated_at = ?
-      WHERE id = ? AND status IN ('pending', 'awaiting_confirmation')
-    `).run(nextStatus, String(adminNote || '').slice(0, 200), adminUserId, now, now, topup.id);
-
-    if (!update.changes) {
-      return rowToPixTopup(db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(topup.id));
-    }
-
-    if (approve) {
-      const topupCreditKey = `pix:confirm:${topup.id}`;
-      const existingCredit = findWalletTransactionByIdempotency(topupCreditKey);
-      if (!existingCredit?.id) {
-        creditWalletWithLedger({
-          userId: topup.user_id,
-          amount: Number(topup.amount || 0),
-          method: 'Pix',
-          description: 'Recarga PIX confirmada',
-          referenceId: topup.id,
-          idempotencyKey: topupCreditKey,
-          status: 'posted'
-        });
-      }
-    }
-
-    return rowToPixTopup(db.prepare('SELECT * FROM pix_topups WHERE id = ?').get(topup.id));
-  });
-}
-
-function confirmPixTopupByTxid(txid, approve = true, adminNote = '', actorId = null) {
-  const row = db.prepare('SELECT id FROM pix_topups WHERE txid = ? ORDER BY created_at DESC LIMIT 1').get(String(txid || '').trim());
-  if (!row?.id) return null;
-  return confirmPixTopupByAdmin(row.id, actorId, approve, adminNote);
-}
-
-function topupWallet(userId, amount, method = 'Pix', options = {}) {
-  const value = Number(Number(amount || 0).toFixed(2));
-  if (!Number.isFinite(value) || value <= 0) throw new Error('Informe um valor válido para recarga.');
-  const idempotencyKey = normalizeIdempotencyKey(options.idempotencyKey || options.referenceId || null);
-  return withImmediateTransaction(() => {
-    const existing = findWalletTransactionByIdempotency(idempotencyKey);
-    if (existing?.id) return getWalletBalance(userId);
-    return creditWalletWithLedger({
-      userId,
-      amount: value,
-      method,
-      description: String(options.description || 'Recarga de saldo no aplicativo'),
-      referenceId: options.referenceId || null,
-      idempotencyKey,
-      status: options.status || 'posted'
-    });
-  });
-}
-
-function debitWalletForRide(userId, amount, rideId, idempotencyKey = null) {
-  const value = Number(Number(amount || 0).toFixed(2));
-  const normalizedKey = normalizeIdempotencyKey(idempotencyKey);
-  return withImmediateTransaction(() => {
-    const existing = findWalletTransactionByIdempotency(normalizedKey);
-    if (existing?.id) return getWalletBalance(userId);
-    return debitWalletWithLedger({
-      userId,
-      amount: value,
-      method: 'Saldo do app',
-      description: 'Pagamento de corrida',
-      referenceId: rideId,
-      idempotencyKey: normalizedKey,
-      status: 'posted'
-    });
-  });
-}
-
-function refundWalletForRide(userId, amount, rideId, idempotencyKey = null) {
-  const value = Number(Number(amount || 0).toFixed(2));
-  if (!Number.isFinite(value) || value <= 0) return getWalletBalance(userId);
-  const normalizedKey = normalizeIdempotencyKey(idempotencyKey);
-  return withImmediateTransaction(() => {
-    const existing = findWalletTransactionByIdempotency(normalizedKey);
-    if (existing?.id) return getWalletBalance(userId);
-    return creditWalletWithLedger({
-      userId,
-      amount: value,
-      method: 'Saldo do app',
-      description: 'Estorno de corrida cancelada',
-      referenceId: rideId,
-      idempotencyKey: normalizedKey,
-      status: 'posted'
-    });
-  });
-}
-
 function getTariffRules() {
   const row = db.prepare('SELECT * FROM tariff_rules WHERE id = 1').get();
   return {
@@ -1363,24 +1040,6 @@ function cleanupLoginAttemptBuckets() {
   }
 }
 
-function validatePixWebhookAuth(req) {
-  if (!PIX_WEBHOOK_SECRET) return { ok: false, error: 'PIX_WEBHOOK_SECRET não configurado no servidor.' };
-  const headerSecret = String(req.headers['x-pix-webhook-secret'] || '').trim();
-  const bearer = getBearerToken(req);
-  const provided = headerSecret || bearer;
-  if (!provided) {
-    return { ok: false, error: 'Webhook PIX sem autenticação válida.' };
-  }
-  const expectedBuffer = Buffer.from(PIX_WEBHOOK_SECRET, 'utf8');
-  const providedBuffer = Buffer.from(String(provided), 'utf8');
-  const secretMatches = expectedBuffer.length === providedBuffer.length
-    && crypto.timingSafeEqual(expectedBuffer, providedBuffer);
-  if (!secretMatches) {
-    return { ok: false, error: 'Webhook PIX sem autenticação válida.' };
-  }
-  return { ok: true };
-}
-
 function issueSseTicket(userId) {
   const ticket = crypto.randomBytes(24).toString('base64url');
   sseTickets.set(ticket, {
@@ -1472,9 +1131,6 @@ function validateProductionConfig() {
     const badOrigins = CORS_ALLOWED_ORIGINS.filter(origin => origin.startsWith('http://'));
     if (badOrigins.length) warnings.push(`Remova origens HTTP em produção: ${badOrigins.join(', ')}`);
   }
-  if (NODE_ENV === 'production' && !PIX_WEBHOOK_SECRET) {
-    warnings.push('Defina PIX_WEBHOOK_SECRET para habilitar confirmação PIX automática com segurança.');
-  }
   if (warnings.length && REQUIRE_SECURE_ENV) {
     throw new Error(`Configuração insegura para produção: ${warnings.join(' ')}`);
   }
@@ -1505,8 +1161,7 @@ function systemChecklist() {
       secureAdminPasswordConfigured: ADMIN_INITIAL_PASSWORD !== '123456',
       loginMaxAttempts: LOGIN_MAX_ATTEMPTS,
       loginLockMinutes: LOGIN_LOCK_MINUTES,
-      corsAllowAll: CORS_ALLOW_ALL,
-      pixWebhookConfigured: Boolean(PIX_WEBHOOK_SECRET)
+      corsAllowAll: CORS_ALLOW_ALL
     },
     productionWarnings: warnings,
     checklist: [
@@ -1944,7 +1599,6 @@ function stats() {
     lowRatedDrivers: db.prepare("SELECT COUNT(*) AS count FROM (SELECT driver_id, AVG(rating) AS avg_rating, COUNT(*) AS qty FROM ride_ratings GROUP BY driver_id HAVING qty >= 3 AND avg_rating < 3.5)").get().count,
     supportOpen: db.prepare("SELECT COUNT(*) AS count FROM support_tickets WHERE status != 'closed'").get().count,
     reportsOpen: db.prepare("SELECT COUNT(*) AS count FROM ride_reports WHERE status != 'resolved'").get().count,
-    pixPending: db.prepare("SELECT COUNT(*) AS count FROM pix_topups WHERE status IN ('pending', 'awaiting_confirmation')").get().count,
     driverDocsPending: db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'driver' AND document_status IN ('not_sent', 'pending_review')").get().count,
     totalRevenue: Number(Number(totalRevenue).toFixed(2)),
     estimatedPlatformCommission: Number(commission.toFixed(2))
@@ -2269,7 +1923,7 @@ async function handleApi(req, res, url) {
           baseUrl: APP_BASE_URL,
           realtimeClients: eventClients.size,
           database: 'sqlite',
-          features: ['api', 'sqlite', 'secure-sessions', 'security-headers', 'rate-limit', 'production-healthcheck', 'deploy-ready', 'geolocation', 'leaflet-map', 'route-calculation', 'realtime-sse', 'ride-cancellation', 'ride-contact', 'ride-rating', 'quality-dashboard', 'support-tickets', 'safety-reports', 'driver-documents', 'legal-lgpd', 'pwa', 'capacitor-android', 'mobile-api-config', 'mobile-cors', 'wallet-credit']
+          features: ['api', 'sqlite', 'secure-sessions', 'security-headers', 'rate-limit', 'production-healthcheck', 'deploy-ready', 'geolocation', 'leaflet-map', 'route-calculation', 'realtime-sse', 'ride-cancellation', 'ride-contact', 'ride-rating', 'quality-dashboard', 'support-tickets', 'safety-reports', 'driver-documents', 'legal-lgpd', 'pwa', 'capacitor-android', 'mobile-api-config', 'mobile-cors']
         });
       } catch {
         return send(res, 503, {
@@ -2292,30 +1946,6 @@ async function handleApi(req, res, url) {
         ticket,
         expiresInMs: SSE_TICKET_TTL_MS
       });
-    }
-
-    if (method === 'POST' && pathname === '/api/webhooks/pix/confirm') {
-      if (!PIX_WEBHOOK_ENABLED) {
-        return send(res, 404, { ok: false, error: 'Webhook PIX desabilitado.' });
-      }
-      const auth = validatePixWebhookAuth(req);
-      if (!auth.ok) return send(res, 401, { ok: false, error: auth.error });
-      const body = await parseBody(req);
-      const txid = String(body.txid || body.reference || '').trim();
-      if (!txid) return send(res, 400, { ok: false, error: 'Webhook PIX sem txid.' });
-      const statusRaw = String(body.status || body.event || '').trim().toLowerCase();
-      const approvedStatuses = ['paid', 'approved', 'confirmed', 'completed', 'success', 'liquidated', 'settled'];
-      const rejectedStatuses = ['rejected', 'failed', 'canceled', 'cancelled', 'chargeback', 'expired'];
-      const approve = body.approve === true || body.approve === 'true' || approvedStatuses.includes(statusRaw)
-        ? true
-        : (body.approve === false || body.approve === 'false' || rejectedStatuses.includes(statusRaw) ? false : null);
-      if (approve === null) {
-        return send(res, 400, { ok: false, error: 'Status do webhook PIX não reconhecido.' });
-      }
-      const topup = confirmPixTopupByTxid(txid, approve, String(body.note || body.message || '').slice(0, 200), null);
-      if (!topup) return send(res, 404, { ok: false, error: 'TXID PIX não encontrado.' });
-      audit(null, approve ? 'wallet_topup_pix_auto_confirmed' : 'wallet_topup_pix_auto_rejected', 'wallet', topup.userId, { pixTopupId: topup.id, txid, amount: topup.amount });
-      return send(res, 200, { ok: true, topup, message: approve ? 'PIX confirmado automaticamente.' : 'PIX rejeitado automaticamente.' });
     }
 
     if (method === 'GET' && pathname === '/api/events') {
@@ -2367,7 +1997,15 @@ async function handleApi(req, res, url) {
         termsAccepted: true,
         privacyAccepted: true
       });
-      insertUser(user);
+      try {
+        insertUser(user);
+      } catch (error) {
+        // Em requisições concorrentes, o índice UNIQUE de telefone pode disparar aqui.
+        if (isUniqueConstraintError(error) && getUserByPhone(phone)) {
+          return send(res, 409, { ok: false, error: 'Telefone já cadastrado.' });
+        }
+        throw error;
+      }
       return send(res, 201, {
         ok: true,
         message: role === 'driver' ? 'Motorista cadastrado. Aguarde aprovação do administrador.' : 'Passageiro cadastrado com sucesso.',
@@ -2477,68 +2115,6 @@ async function handleApi(req, res, url) {
       return send(res, 200, { ok: true, user: publicUser(user) });
     }
 
-    if (method === 'GET' && pathname === '/api/wallet') {
-      const user = requireAuth(req, res, ['passenger', 'admin']);
-      if (!user) return;
-      return send(res, 200, {
-        ok: true,
-        balance: getWalletBalance(user.id),
-        transactions: getWalletTransactions(user.id, 30),
-        pixTopupsPending: listPixTopupsByUser(user.id, 20)
-      });
-    }
-
-    if (method === 'POST' && pathname === '/api/wallet/topup') {
-      const user = requireAuth(req, res, ['passenger', 'admin']);
-      if (!user) return;
-      const body = await parseBody(req);
-      const amount = Number(body.amount || 0);
-      if (!Number.isFinite(amount) || amount <= 0) {
-        return send(res, 400, { ok: false, error: 'Informe um valor de recarga válido.' });
-      }
-      const methodLabel = normalizePaymentMethod(body.method || 'Pix');
-      if (!methodLabel || methodLabel === 'Saldo do app') {
-        return send(res, 400, { ok: false, error: 'Use Pix ou Dinheiro para recarregar o saldo.' });
-      }
-      if (methodLabel === 'Pix') {
-        const pendingPix = createPixTopupRequest(user.id, amount);
-        audit(user.id, 'wallet_topup_pix_requested', 'wallet', user.id, { amount, pixTopupId: pendingPix.id });
-        return send(res, 202, {
-          ok: true,
-          pending: true,
-          message: `PIX de R$ ${Number(amount).toFixed(2)} gerado. O saldo será liberado após confirmação.`,
-          pendingPix,
-          pixTopupsPending: listPixTopupsByUser(user.id, 20),
-          balance: getWalletBalance(user.id),
-          transactions: getWalletTransactions(user.id, 20)
-        });
-      }
-      const balance = topupWallet(user.id, amount, methodLabel);
-      audit(user.id, 'wallet_topup', 'wallet', user.id, { amount, method: methodLabel, balance });
-      return send(res, 201, {
-        ok: true,
-        message: `Recarga de R$ ${Number(amount).toFixed(2)} realizada com sucesso.`,
-        balance,
-        transactions: getWalletTransactions(user.id, 20),
-        pixTopupsPending: listPixTopupsByUser(user.id, 20)
-      });
-    }
-
-    const pixMarkPaidMatch = pathname.match(/^\/api\/wallet\/pix\/([^/]+)\/mark-paid$/);
-    if (method === 'PATCH' && pixMarkPaidMatch) {
-      const user = requireAuth(req, res, ['passenger', 'admin']);
-      if (!user) return;
-      const topup = markPixTopupPaidByUser(pixMarkPaidMatch[1], user.id);
-      if (!topup) return send(res, 404, { ok: false, error: 'Solicitação PIX não encontrada.' });
-      audit(user.id, 'wallet_topup_pix_mark_paid', 'wallet', user.id, { pixTopupId: topup.id, status: topup.status });
-      return send(res, 200, {
-        ok: true,
-        topup,
-        pixTopupsPending: listPixTopupsByUser(user.id, 20),
-        message: 'Pagamento PIX marcado para confirmação administrativa.'
-      });
-    }
-
     if (method === 'GET' && pathname === '/api/config') {
       return send(res, 200, { ok: true, tariffRules: getTariffRules(), stats: stats(), paymentMethods: PAYMENT_METHODS });
     }
@@ -2622,7 +2198,7 @@ async function handleApi(req, res, url) {
       if (missing) return send(res, 400, { ok: false, error: missing });
       const paymentMethod = normalizePaymentMethod(body.paymentMethod || 'Pix');
       if (!paymentMethod) {
-        return send(res, 400, { ok: false, error: 'Forma de pagamento inválida. Use Pix, Dinheiro ou Saldo do app.' });
+        return send(res, 400, { ok: false, error: 'Forma de pagamento inválida. Use Pix ou Dinheiro.' });
       }
       const { origin: originCoords, destination: destinationCoords } = coordsFromBody(body);
       let route = null;
@@ -2636,12 +2212,6 @@ async function handleApi(req, res, url) {
       }
       const rules = getTariffRules();
       const fare = calculateFare(distanceKm, minutes, rules);
-      if (paymentMethod === 'Saldo do app') {
-        const balance = getWalletBalance(user.id);
-        if (balance < fare) {
-          return send(res, 400, { ok: false, error: `Saldo insuficiente. Saldo atual: R$ ${balance.toFixed(2)}.` });
-        }
-      }
       const availableDrivers = originCoords ? driverAvailable(originCoords) : driverAvailable();
       const rideIdempotencyKey = normalizeIdempotencyKey(body.idempotencyKey || null);
       if (rideIdempotencyKey) {
@@ -2688,25 +2258,7 @@ async function handleApi(req, res, url) {
         cancelReason: null
       };
       try {
-        withImmediateTransaction(() => {
-          insertRide(ride);
-          if (paymentMethod === 'Saldo do app') {
-            const debitKey = normalizeIdempotencyKey(`ride:debit:${user.id}:${rideIdempotencyKey || ride.id}`);
-            const existingDebit = findWalletTransactionByIdempotency(debitKey);
-            const balanceAfter = existingDebit?.id
-              ? getWalletBalance(user.id)
-              : debitWalletWithLedger({
-                userId: user.id,
-                amount: fare,
-                method: 'Saldo do app',
-                description: 'Pagamento de corrida',
-                referenceId: ride.id,
-                idempotencyKey: debitKey,
-                status: 'posted'
-              });
-            audit(user.id, 'wallet_debit_ride', 'wallet', user.id, { rideId: ride.id, amount: fare, balance: balanceAfter });
-          }
-        });
+        insertRide(ride);
       } catch (error) {
         if (isUniqueConstraintError(error) && rideIdempotencyKey) {
           const existing = db.prepare('SELECT * FROM rides WHERE passenger_id = ? AND idempotency_key = ? LIMIT 1')
@@ -2862,33 +2414,14 @@ async function handleApi(req, res, url) {
         return send(res, error.statusCode || 409, { ok: false, error: error.message });
       }
       const cancelledAt = nowIso();
-      withImmediateTransaction(() => {
-        const result = db.prepare(`
-          UPDATE rides
-          SET status = ?, cancelled_at = ?, cancelled_by = ?, cancel_reason = ?
-          WHERE id = ? AND status IN ('pending', 'accepted')
-        `).run('cancelled', cancelledAt, user.id, reason, ride.id);
-        if (!result.changes) {
-          throw Object.assign(new Error('Corrida já cancelada ou finalizada.'), { statusCode: 409 });
-        }
-
-        if (ride.paymentMethod === 'Saldo do app' && ['pending', 'accepted'].includes(ride.status)) {
-          const refundKey = normalizeIdempotencyKey(`ride:cancel-refund:${ride.id}`);
-          const existingRefund = findWalletTransactionByIdempotency(refundKey);
-          const balanceAfter = existingRefund?.id
-            ? getWalletBalance(ride.passengerId)
-            : creditWalletWithLedger({
-              userId: ride.passengerId,
-              amount: Number(ride.fare || 0),
-              method: 'Saldo do app',
-              description: 'Estorno de corrida cancelada',
-              referenceId: ride.id,
-              idempotencyKey: refundKey,
-              status: 'posted'
-            });
-          audit(user.id, 'wallet_refund_ride_cancel', 'wallet', ride.passengerId, { rideId: ride.id, amount: ride.fare, balance: balanceAfter });
-        }
-      });
+      const result = db.prepare(`
+        UPDATE rides
+        SET status = ?, cancelled_at = ?, cancelled_by = ?, cancel_reason = ?
+        WHERE id = ? AND status IN ('pending', 'accepted')
+      `).run('cancelled', cancelledAt, user.id, reason, ride.id);
+      if (!result.changes) {
+        return send(res, 409, { ok: false, error: 'Corrida já cancelada ou finalizada.' });
+      }
       audit(user.id, 'cancel_ride', 'ride', ride.id, { reason, previousStatus: ride.status });
       const updatedRide = getRideById(ride.id);
       emitRideEvent('cancelled', updatedRide, { cancelledBy: publicUser(user), reason });
@@ -2994,34 +2527,10 @@ async function handleApi(req, res, url) {
         tariffRules: getTariffRules(),
         users: getAllUsers().map(publicUser),
         rides: getAllRides(),
-        pixTopupsPending: listPendingPixTopupsForAdmin(200),
         supportTickets: getSupportTickets(),
         rideReports: getRideReports(),
         legal: getLegalContent(),
         database: { type: 'SQLite', path: 'data/pardogo.sqlite' }
-      });
-    }
-
-    if (method === 'GET' && pathname === '/api/admin/wallet/pix-pending') {
-      const user = requireAuth(req, res, ['admin']);
-      if (!user) return;
-      return send(res, 200, { ok: true, pixTopupsPending: listPendingPixTopupsForAdmin(500) });
-    }
-
-    const adminPixConfirmMatch = pathname.match(/^\/api\/admin\/wallet\/pix\/([^/]+)\/confirm$/);
-    if (method === 'PATCH' && adminPixConfirmMatch) {
-      const user = requireAuth(req, res, ['admin']);
-      if (!user) return;
-      const body = await parseBody(req);
-      const approve = !(body.approve === false || body.approve === 'false' || body.action === 'reject');
-      const topup = confirmPixTopupByAdmin(adminPixConfirmMatch[1], user.id, approve, body.note || '');
-      if (!topup) return send(res, 404, { ok: false, error: 'Solicitação PIX não encontrada.' });
-      audit(user.id, approve ? 'wallet_topup_pix_confirmed' : 'wallet_topup_pix_rejected', 'wallet', topup.userId, { pixTopupId: topup.id, amount: topup.amount });
-      return send(res, 200, {
-        ok: true,
-        topup,
-        pixTopupsPending: listPendingPixTopupsForAdmin(500),
-        message: approve ? 'PIX confirmado e saldo liberado.' : 'Solicitação PIX recusada.'
       });
     }
 
