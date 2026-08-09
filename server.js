@@ -24,9 +24,9 @@ const ADMIN_INITIAL_PHONE = ADMIN_INITIAL_PHONE_RAW === ADMIN_LEGACY_ALIAS
   : ADMIN_INITIAL_PHONE_RAW.replace(/\D/g, '');
 const ADMIN_INITIAL_PASSWORD = String(envConfig.ADMIN_INITIAL_PASSWORD || 'troque-essa-senha-forte');
 const GOOGLE_CLIENT_ID = String(envConfig.GOOGLE_CLIENT_ID || '').trim();
-const FORCE_HTTPS = Boolean(envConfig.FORCE_HTTPS);
-const TRUST_PROXY = Boolean(envConfig.TRUST_PROXY);
-const REQUIRE_SECURE_ENV = Boolean(envConfig.REQUIRE_SECURE_ENV);
+const FORCE_HTTPS = envConfig.FORCE_HTTPS === true;
+const TRUST_PROXY = envConfig.TRUST_PROXY === true;
+const REQUIRE_SECURE_ENV = envConfig.REQUIRE_SECURE_ENV === true;
 const APP_BASE_ORIGIN = (() => {
   try { return new URL(APP_BASE_URL).origin; } catch { return ''; }
 })();
@@ -78,7 +78,7 @@ const PIX_KEY = String(envConfig.PIX_KEY || ADMIN_INITIAL_PHONE || '').trim();
 const PIX_MERCHANT_NAME = String(envConfig.PIX_MERCHANT_NAME || 'PARDOGO').trim();
 const PIX_MERCHANT_CITY = String(envConfig.PIX_MERCHANT_CITY || 'SANTA RITA DO PARDO').trim();
 const PIX_DESCRIPTION = String(envConfig.PIX_DESCRIPTION || 'RECARGA PARDOGO').trim();
-const PIX_WEBHOOK_ENABLED = Boolean(envConfig.PIX_WEBHOOK_ENABLED);
+const PIX_WEBHOOK_ENABLED = envConfig.PIX_WEBHOOK_ENABLED === true;
 const PIX_WEBHOOK_SECRET = String(envConfig.PIX_WEBHOOK_SECRET || '').trim();
 
 const defaultTariffRules = {
@@ -2262,9 +2262,9 @@ async function handleApi(req, res, url) {
           app: 'PardoGo',
           version: APP_VERSION,
           environment: NODE_ENV,
-          renderCommit: String(process.env.RENDER_GIT_COMMIT || '').trim() || null,
+          renderCommit: String(process.env.RENDER_GIT_COMMIT || '').trim().slice(0, 12) || null,
           renderBranch: String(process.env.RENDER_GIT_BRANCH || '').trim() || null,
-          renderRepo: String(process.env.RENDER_GIT_REPO || '').trim() || null,
+          renderRepo: String(process.env.RENDER_GIT_REPO_SLUG || '').trim() || null,
           uptimeSeconds: Math.round(process.uptime()),
           baseUrl: APP_BASE_URL,
           realtimeClients: eventClients.size,

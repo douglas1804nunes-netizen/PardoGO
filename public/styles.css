@@ -440,6 +440,35 @@ h2 { margin: 0 0 12px; letter-spacing: -.03em; color: #0f172a; }
 .password-wrap { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
 .logged-actions, .item-actions, .status-row, .location-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .location-row.spaced { margin-top: 16px; }
+
+.autocomplete-list {
+  position: relative;
+  z-index: 7;
+  display: grid;
+  gap: 6px;
+  margin: -4px 0 8px;
+  padding: 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(2, 132, 199, .22);
+  background: #fff;
+  box-shadow: 0 12px 22px rgba(15, 23, 42, .10);
+}
+
+.autocomplete-item {
+  width: 100%;
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid rgba(15, 23, 42, .08);
+  background: #f8fbff;
+  color: #0f172a;
+  padding: 9px 11px;
+  font-size: 13px;
+}
+
+.autocomplete-item:hover {
+  background: #e0f2fe;
+  border-color: rgba(2, 132, 199, .35);
+}
 .logged-card {
   position: relative;
   z-index: 4;
@@ -743,6 +772,14 @@ button:disabled { opacity: .62; cursor: not-allowed; transform: none; }
     radial-gradient(circle at 80% 74%, rgba(250, 204, 21, .22), transparent 15%),
     linear-gradient(135deg, #e0f7ff, #f8fafc 52%, #e0f2fe);
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.7), var(--shadow-soft);
+}
+
+.map-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 10px;
 }
 .map-shell.fallback-map::after {
   content: "Mapa simulado";

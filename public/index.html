@@ -167,8 +167,9 @@
           <h2>Pedir corrida</h2>
           <form id="rideForm" class="form">
             <label>Origem
-              <input name="origin" list="originSuggestions" placeholder="Ex.: Centro, mercado, casa" required>
+              <input name="origin" list="originSuggestions" placeholder="Ex.: Centro, mercado, casa" required autocomplete="off">
             </label>
+            <div id="originAutocomplete" class="autocomplete-list hidden" role="listbox" aria-label="Sugestões de origem"></div>
             <div class="location-row">
               <button type="button" id="useLocationBtn" class="ghost dark">Usar minha localização</button>
               <button type="button" id="lookupOriginBtn" class="ghost dark">Buscar origem</button>
@@ -177,8 +178,9 @@
             <input type="hidden" name="originLat">
             <input type="hidden" name="originLng">
             <label>Destino
-              <input name="destination" list="destinationSuggestions" placeholder="Ex.: Hospital, rodoviária, bairro" required>
+              <input name="destination" list="destinationSuggestions" placeholder="Ex.: Hospital, rodoviária, bairro" required autocomplete="off">
             </label>
+            <div id="destinationAutocomplete" class="autocomplete-list hidden" role="listbox" aria-label="Sugestões de destino"></div>
             <div class="location-row">
               <button type="button" id="lookupDestinationBtn" class="ghost dark">Buscar destino no mapa</button>
               <button type="button" id="calculateRouteBtn" class="ghost dark">Calcular rota real</button>
@@ -216,13 +218,17 @@
             </label>
             <small id="routeModeText" class="muted">Defina origem e destino para calcular a rota automaticamente.</small>
             <button type="button" id="estimateBtn" class="ghost dark">Atualizar estimativa</button>
-            <button type="submit">Confirmar solicitação</button>
+            <button type="submit" id="rideSubmitBtn" disabled>Solicitar corrida</button>
           </form>
         </article>
 
         <article class="card protected" data-role="passenger admin">
           <h2>Mapa da corrida</h2>
           <p class="muted">Mapa real com OpenStreetMap. Clique no mapa para marcar origem/destino ou use os botões de busca.</p>
+          <div class="map-tools">
+            <button type="button" id="mapLocateBtn" class="ghost dark">◎ Minha localização</button>
+            <small id="mapLoadingText" class="muted">Mapa pronto para uso.</small>
+          </div>
           <div class="map-shell" id="routeMap"></div>
           <div class="route-summary" id="routeSummary">Preencha origem, destino e calcule a corrida para visualizar a rota.</div>
         </article>

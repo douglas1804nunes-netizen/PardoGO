@@ -26,15 +26,14 @@ function loadEnvFile(filePath = envFilePath) {
   return values;
 }
 
-function toBoolean(value, fallback = false) {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value === 1;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
-    if (['0', 'false', 'no', 'off', ''].includes(normalized)) return false;
+function parseBoolean(value, defaultValue = false) {
+  if (value === undefined || value === null || value === '') {
+    return defaultValue;
   }
-  return fallback;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return defaultValue;
 }
 
 function toNumber(value, fallback = 0) {
@@ -130,8 +129,8 @@ function validateEnvConfig(overrides = {}) {
   const adminPhoneDigits = normalizePhoneDigits(adminPhoneRaw);
   const adminPassword = String(env.ADMIN_INITIAL_PASSWORD || '');
   const corsOrigins = parseCorsOrigins(env.CORS_ORIGIN);
-  const requireSecureEnv = toBoolean(env.REQUIRE_SECURE_ENV, false);
-  const pixWebhookEnabled = toBoolean(env.PIX_WEBHOOK_ENABLED, false);
+  const requireSecureEnv = parseBoolean(env.REQUIRE_SECURE_ENV, false);
+  const pixWebhookEnabled = parseBoolean(env.PIX_WEBHOOK_ENABLED, false);
   const pixWebhookSecret = String(env.PIX_WEBHOOK_SECRET || '').trim();
 
   if (!appBaseUrl) {
@@ -182,15 +181,15 @@ function validateEnvConfig(overrides = {}) {
     }
   }
 
-  if (isProduction && !toBoolean(env.FORCE_HTTPS, false)) {
+  if (isProduction && !parseBoolean(env.FORCE_HTTPS, false)) {
     errors.push('FORCE_HTTPS=1 é obrigatório em produção.');
   }
-  if (isProduction && !toBoolean(env.TRUST_PROXY, false)) {
+  if (isProduction && !parseBoolean(env.TRUST_PROXY, false)) {
     errors.push('TRUST_PROXY=1 é obrigatório em produção.');
   }
 
-  if (pixWebhookEnabled && !pixWebhookSecret) {
-    errors.push('PIX_WEBHOOK_SECRET é obrigatório quando PIX_WEBHOOK_ENABLED=1.');
+  if (isProduction && pixWebhookEnabled && !pixWebhookSecret) {
+    warnings.push('PIX_WEBHOOK_SECRET é obrigatório quando PIX_WEBHOOK_ENABLED=1.');
   }
 
   if (isProduction && !requireSecureEnv) {
@@ -218,9 +217,9 @@ function getEnvConfig(overrides = {}) {
   const SESSION_DAYS = toNumber(env.SESSION_DAYS, 7);
   const DRIVER_LOCATION_STALE_SECONDS = toNumber(env.DRIVER_LOCATION_STALE_SECONDS, 120);
   const PORT = toNumber(env.PORT, 5173);
-  const FORCE_HTTPS = toBoolean(env.FORCE_HTTPS, false);
-  const TRUST_PROXY = toBoolean(env.TRUST_PROXY, false);
-  const REQUIRE_SECURE_ENV = toBoolean(env.REQUIRE_SECURE_ENV, false);
+  const FORCE_HTTPS = parseBoolean(env.FORCE_HTTPS, false);
+  const TRUST_PROXY = parseBoolean(env.TRUST_PROXY, false);
+  const REQUIRE_SECURE_ENV = parseBoolean(env.REQUIRE_SECURE_ENV, false);
   const RATE_LIMIT_WINDOW_MS = toNumber(env.RATE_LIMIT_WINDOW_MS, 60_000);
   const RATE_LIMIT_MAX = toNumber(env.RATE_LIMIT_MAX, 300);
   const LOGIN_MAX_ATTEMPTS = toNumber(env.LOGIN_MAX_ATTEMPTS, 5);
@@ -231,7 +230,7 @@ function getEnvConfig(overrides = {}) {
   const SSE_PING_MS = toNumber(env.SSE_PING_MS, 25000);
   const SSE_TICKET_TTL_MS = toNumber(env.SSE_TICKET_TTL_MS, 60_000);
   const PIX_WEBHOOK_SECRET = String(env.PIX_WEBHOOK_SECRET || '').trim();
-  const PIX_WEBHOOK_ENABLED = toBoolean(env.PIX_WEBHOOK_ENABLED, false);
+  const PIX_WEBHOOK_ENABLED = parseBoolean(env.PIX_WEBHOOK_ENABLED, false);
   const GOOGLE_CLIENT_ID = String(env.GOOGLE_CLIENT_ID || '').trim();
   const PIX_KEY = String(env.PIX_KEY || ADMIN_INITIAL_PHONE || '').trim();
   const PIX_MERCHANT_NAME = String(env.PIX_MERCHANT_NAME || 'PARDOGO').trim();
@@ -286,6 +285,7 @@ const envConfig = getEnvConfig();
 
 module.exports = {
   loadEnvFile,
+  parseBoolean,
   validateEnvConfig,
   getEnvConfig,
   envConfig
