@@ -51,18 +51,6 @@ services:
         value: "120"
       - key: GOOGLE_CLIENT_ID
         sync: false
-      - key: PIX_KEY
-        sync: false
-      - key: PIX_WEBHOOK_ENABLED
-        value: "0"
-      - key: PIX_WEBHOOK_SECRET
-        sync: false
-      - key: PIX_MERCHANT_NAME
-        value: PARDOGO
-      - key: PIX_MERCHANT_CITY
-        value: SANTA RITA DO PARDO
-      - key: PIX_DESCRIPTION
-        value: RECARGA PARDOGO
     disk:
       name: pardogo-data
       mountPath: /var/data
