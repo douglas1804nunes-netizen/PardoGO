@@ -8,8 +8,15 @@ on:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
 
     steps:
       - name: Checkout
@@ -40,6 +47,7 @@ jobs:
         run: npx cap sync android
 
       - name: Capacitor doctor
+        if: matrix.os == 'ubuntu-latest'
         run: npx cap doctor
 
       - name: Mobile checks
