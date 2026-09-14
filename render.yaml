@@ -9,6 +9,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_VERSION
+        value: 22.13.0
       - key: APP_BASE_URL
         value: https://pardogo-8yn0.onrender.com
       - key: CANONICAL_BASE_URL
