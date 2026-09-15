@@ -89,6 +89,7 @@ const state = {
   token: localStorage.getItem('pardogo_token') || '',
   user: JSON.parse(localStorage.getItem('pardogo_user') || 'null'),
   tariffRules: null,
+  fixedFare: 20,
   driverOnline: false,
   currentPosition: null,
   destinationPosition: null,
@@ -569,6 +570,16 @@ function permissionTone(state) {
   return 'warn';
 }
 
+function permissionLabel(state) {
+  const map = {
+    granted: 'concedida',
+    denied: 'negada',
+    prompt: 'não solicitada',
+    indisponivel: 'indisponível'
+  };
+  return map[state] || 'não solicitada';
+}
+
 function hasContactPicker() {
   return Boolean(navigator.contacts && typeof navigator.contacts.select === 'function');
 }
@@ -594,13 +605,25 @@ async function contactPermissionState() {
 
 async function updateMobilePermissionsStatus() {
   const note = $('#firstAccessNote');
-  if (!note) return;
-  const notificationState = 'Notification' in window ? (Notification.permission || 'default') : 'indisponivel';
-  const noteParts = [
-    'No primeiro acesso, o app pode pedir permissão de localização, notificações e câmera/microfone quando uma função exigir.',
-    notificationState === 'granted' ? 'Notificações já estão ativas.' : 'Notificações ainda não foram liberadas.'
-  ];
-  note.textContent = noteParts.join(' ');
+  const locationChip = $('#locationPermissionChip');
+  const notificationChip = $('#notificationPermissionChip');
+  if (!note && !locationChip && !notificationChip) return;
+
+  const locationState = hasGeo() ? await queryPermissionState('geolocation') : 'indisponivel';
+  const rawNotificationState = 'Notification' in window ? (Notification.permission || 'default') : 'indisponivel';
+  const notificationState = rawNotificationState === 'default' ? 'prompt' : rawNotificationState;
+
+  if (locationChip) {
+    locationChip.textContent = `Localização: ${permissionLabel(locationState)}`;
+    locationChip.className = `permission-chip ${permissionTone(locationState)}`;
+  }
+  if (notificationChip) {
+    notificationChip.textContent = `Notificações: ${permissionLabel(notificationState)}`;
+    notificationChip.className = `permission-chip ${permissionTone(notificationState)}`;
+  }
+  if (note) {
+    note.textContent = 'No primeiro acesso, o app pode pedir permissão de localização, notificações e câmera/microfone quando uma função exigir. Use os botões abaixo para liberar agora.';
+  }
 }
 
 async function requestEssentialPermissions() {
@@ -642,6 +665,8 @@ async function requestLocationPermission() {
     toast('Permissão de localização concedida.', 'ok');
   } catch (error) {
     toast(geolocationErrorMessage(error), 'error');
+  } finally {
+    await updateMobilePermissionsStatus();
   }
 }
 
@@ -654,11 +679,13 @@ async function requestNotificationPermission() {
     const result = await Notification.requestPermission();
     if (result === 'granted') {
       toast('Permissão de notificações concedida.', 'ok');
-      return;
+    } else {
+      toast('Permissão de notificações não foi concedida.', 'error');
     }
-    toast('Permissão de notificações não foi concedida.', 'error');
   } catch {
     toast('Não foi possível solicitar notificações neste momento.', 'error');
+  } finally {
+    await updateMobilePermissionsStatus();
   }
 }
 
@@ -898,8 +925,10 @@ function protectPanels() {
 async function loadConfig() {
   const data = await api('/api/config');
   state.tariffRules = data.tariffRules;
-  $('#tariffMin').textContent = money(data.tariffRules.min);
-  $('#tariffRulesText').textContent = `${money(data.tariffRules.base)} + ${money(data.tariffRules.perKm)}/km + ${money(data.tariffRules.perMin)}/min`;
+  state.fixedFare = Number(data.fixedFare || 20);
+  $('#tariffMin').textContent = money(state.fixedFare);
+  $('#tariffRulesText').textContent = 'Preço fixo, sem cálculo por km/min';
+  if ($('#tariffFixedFareNote')) $('#tariffFixedFareNote').textContent = `valor fixo de ${money(state.fixedFare)}`;
   fillTariffForm(data.tariffRules);
 }
 
@@ -1354,38 +1383,46 @@ function drawLeafletRoute(originLabel, destinationLabel, originCoords, destinati
   if (bounds.length === 1) state.map.setView(bounds[0], 15);
 }
 
+async function handleRideMarkerDragEnd(type, next) {
+  const form = $('#rideForm');
+  const fallbackLabel = type === 'origin' ? 'Origem ajustada no mapa' : 'Destino ajustado no mapa';
+  setMapLoading('Buscando endereço...');
+  let nextLabel = fallbackLabel;
+  try {
+    const resolved = await reverseGeocode(next.lat, next.lng);
+    if (resolved) nextLabel = resolved;
+  } catch {}
+  if (type === 'origin') {
+    setOriginCoords(next.lat, next.lng, nextLabel);
+    if (form?.elements?.origin) form.elements.origin.value = nextLabel;
+  } else {
+    setDestinationCoords(next.lat, next.lng, nextLabel);
+    if (form?.elements?.destination) form.elements.destination.value = nextLabel;
+  }
+  setMapLoading('Calculando rota...');
+  try {
+    await calculateRoute();
+    await estimateFare();
+  } catch {
+    setMapLoading('Não foi possível atualizar a rota.');
+  }
+  setMapLoading('Mapa pronto para uso.');
+  renderRouteMap();
+}
+
 function setLeafletMarker(key, coords, label, options = {}) {
   if (state.markers[key]) {
     state.markers[key].setLatLng([coords.lat, coords.lng]).bindPopup(label);
     return;
   }
+  const isRidePoint = key === 'origin' || key === 'destination';
   const markerOptions = {
     ...options,
-    draggable: key === 'destination'
+    draggable: isRidePoint
   };
   const marker = L.marker([coords.lat, coords.lng], markerOptions).addTo(state.map).bindPopup(label);
-  if (key === 'destination') {
-    marker.on('dragend', async event => {
-      const next = event.target.getLatLng();
-      setMapLoading('Buscando endereço...');
-      let nextLabel = 'Destino ajustado no mapa';
-      try {
-        const resolved = await reverseGeocode(next.lat, next.lng);
-        if (resolved) nextLabel = resolved;
-      } catch {}
-      setDestinationCoords(next.lat, next.lng, nextLabel);
-      const form = $('#rideForm');
-      if (form?.elements?.destination) form.elements.destination.value = nextLabel;
-      setMapLoading('Calculando rota...');
-      try {
-        await calculateRoute();
-        await estimateFare();
-      } catch {
-        setMapLoading('Não foi possível atualizar a rota.');
-      }
-      setMapLoading('Mapa pronto para uso.');
-      renderRouteMap();
-    });
+  if (isRidePoint) {
+    marker.on('dragend', event => handleRideMarkerDragEnd(key, event.target.getLatLng()));
   }
   state.markers[key] = marker;
 }
@@ -2018,6 +2055,10 @@ function wireEvents() {
 
   $('#goToAreaBtn')?.addEventListener('click', () => activateTab(targetAreaForCurrentUser()));
   $('#logoutInlineBtn')?.addEventListener('click', () => doLogout());
+
+  $('#requestLocationBtn')?.addEventListener('click', requestLocationPermission);
+  $('#requestNotificationBtn')?.addEventListener('click', requestNotificationPermission);
+  $('#requestEssentialBtn')?.addEventListener('click', requestEssentialPermissions);
 
   $('#useLocationBtn').addEventListener('click', capturePassengerLocation);
   $('#mapLocateBtn')?.addEventListener('click', capturePassengerLocation);

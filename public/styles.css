@@ -964,6 +964,20 @@ button:disabled { opacity: .62; cursor: not-allowed; transform: none; }
   color: #0f172a;
 }
 
+.permission-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(2, 132, 199, .18);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-weight: 800;
+  font-size: 12.5px;
+  line-height: 1;
+  background: #eef2f7;
+  color: #475569;
+}
+
 .permission-chip.ok {
   background: linear-gradient(135deg, #dcfce7, #f0fdf4);
   border-color: #86efac;

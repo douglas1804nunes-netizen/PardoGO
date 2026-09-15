@@ -42,12 +42,12 @@
           </div>
           <div class="hero-visual-meta">
             <div>
-              <strong id="tariffMin">R$ 12,00</strong>
-              <small>Tarifa mínima</small>
+              <strong id="tariffMin">R$ 20,00</strong>
+              <small>Valor fixo da corrida</small>
             </div>
             <div>
               <strong id="tariffRulesText">Carregando regras...</strong>
-              <small>Regras em tempo real</small>
+              <small>Sem cálculo por distância</small>
             </div>
           </div>
         </div>
@@ -73,9 +73,25 @@
           <button type="submit">Entrar</button>
           <div class="auth-entry-actions">
             <button type="button" class="secondary" id="openRegisterBtn">Cadastro</button>
+            <button type="button" class="ghost dark" id="googleAuthBtn">Entrar com Google</button>
           </div>
           <small id="loginStatus" class="form-status muted" role="status" aria-live="polite">Informe seu telefone e senha para acessar.</small>
         </form>
+      </article>
+
+      <article class="auth-card" id="firstAccessPermissions">
+        <p class="section-kicker">Antes de começar</p>
+        <h2>Permissões do app</h2>
+        <p class="muted" id="firstAccessNote">Verificando permissões do dispositivo...</p>
+        <div class="location-row">
+          <span id="locationPermissionChip" class="permission-chip warn">Localização: verificando...</span>
+          <span id="notificationPermissionChip" class="permission-chip warn">Notificações: verificando...</span>
+        </div>
+        <div class="location-row spaced">
+          <button type="button" id="requestLocationBtn" class="ghost dark">Permitir localização</button>
+          <button type="button" id="requestNotificationBtn" class="ghost dark">Permitir notificações</button>
+          <button type="button" id="requestEssentialBtn" class="ghost dark">Câmera/mic e contatos</button>
+        </div>
       </article>
     </section>
 
@@ -133,6 +149,7 @@
           </label>
           <div class="auth-entry-actions">
             <button type="submit" class="secondary">Finalizar cadastro</button>
+            <button type="button" class="ghost dark" id="googleRegisterBtn">Continuar com Google</button>
             <button type="button" class="ghost dark" id="backToLoginBtn">Voltar</button>
           </div>
           <small id="registerStatus" class="form-status muted" role="status" aria-live="polite">Depois do cadastro, volte para o login e entre no sistema.</small>
@@ -167,7 +184,7 @@
           <h2>Pedir corrida</h2>
           <form id="rideForm" class="form">
             <label>Origem
-              <input name="origin" list="originSuggestions" placeholder="Ex.: Centro, mercado, casa" required autocomplete="off">
+              <input name="origin" list="originSuggestions" placeholder="Ex.: Avenida 7 de Setembro, Rua Dom Pedro II" required autocomplete="off">
             </label>
             <div id="originAutocomplete" class="autocomplete-list hidden" role="listbox" aria-label="Sugestões de origem"></div>
             <div class="location-row">
@@ -175,10 +192,11 @@
               <button type="button" id="lookupOriginBtn" class="ghost dark">Buscar origem</button>
               <small id="locationText" class="muted">Localização ainda não capturada.</small>
             </div>
+            <small class="muted">Não achou o nome do lugar? Toque no mapa ao lado para marcar o ponto exato.</small>
             <input type="hidden" name="originLat">
             <input type="hidden" name="originLng">
             <label>Destino
-              <input name="destination" list="destinationSuggestions" placeholder="Ex.: Hospital, rodoviária, bairro" required autocomplete="off">
+              <input name="destination" list="destinationSuggestions" placeholder="Ex.: Avenida Julião de Lima Maia, Rua Marechal Floriano" required autocomplete="off">
             </label>
             <div id="destinationAutocomplete" class="autocomplete-list hidden" role="listbox" aria-label="Sugestões de destino"></div>
             <div class="location-row">
@@ -186,6 +204,7 @@
               <button type="button" id="calculateRouteBtn" class="ghost dark">Calcular rota real</button>
               <small id="destinationText" class="muted">Destino ainda sem coordenadas.</small>
             </div>
+            <small class="muted">Não achou o nome do lugar? Toque no mapa ao lado para marcar o ponto exato.</small>
             <datalist id="originSuggestions"></datalist>
             <datalist id="destinationSuggestions"></datalist>
             <input type="hidden" name="destinationLat">
@@ -202,8 +221,8 @@
                 <strong id="rideMinutesPreview">- min</strong>
               </div>
               <div>
-                <span>Valor estimado</span>
-                <strong id="farePreview">R$ 0,00</strong>
+                <span>Valor da corrida</span>
+                <strong id="farePreview">R$ 20,00</strong>
               </div>
             </div>
             <label>Pagamento
@@ -223,7 +242,7 @@
 
         <article class="card protected" data-role="passenger admin">
           <h2>Mapa da corrida</h2>
-          <p class="muted">Mapa real com OpenStreetMap. Clique no mapa para marcar origem/destino ou use os botões de busca.</p>
+          <p class="muted">Mapa real com OpenStreetMap. Clique no mapa para marcar origem/destino, ou arraste os marcadores para ajustar o ponto exato.</p>
           <div class="map-tools">
             <button type="button" id="mapLocateBtn" class="ghost dark">◎ Minha localização</button>
             <small id="mapLoadingText" class="muted">Mapa pronto para uso.</small>
@@ -270,20 +289,9 @@
         <div class="grid two">
           <article class="card">
             <h2>Regras de tarifa</h2>
+            <p class="muted">Corrida com <strong id="tariffFixedFareNote">valor fixo de R$ 20,00</strong>, sem cálculo por km ou minuto. Ajuste apenas o repasse do motorista.</p>
             <form id="tariffForm" class="form">
               <div class="grid two compact">
-                <label>Bandeirada
-                  <input name="base" type="number" step="0.01">
-                </label>
-                <label>Por km
-                  <input name="perKm" type="number" step="0.01">
-                </label>
-                <label>Por minuto
-                  <input name="perMin" type="number" step="0.01">
-                </label>
-                <label>Tarifa mínima
-                  <input name="min" type="number" step="0.01">
-                </label>
                 <label>Repasse motorista (%)
                   <input name="driverSharePercent" type="number" min="50" max="95" step="1">
                 </label>

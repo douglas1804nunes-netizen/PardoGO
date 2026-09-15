@@ -148,7 +148,7 @@ function validateEnvConfig(overrides = {}) {
   }
 
   if (!dbPath) {
-    errors.push('DB_PATH é obrigatório.');
+    if (isProduction) errors.push('DB_PATH é obrigatório em produção.');
   } else if (isProduction && isTemporaryDbPath(dbPath)) {
     errors.push('DB_PATH não pode apontar para diretório temporário em produção.');
   }

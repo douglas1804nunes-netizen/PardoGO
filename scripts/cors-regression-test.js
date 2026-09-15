@@ -1,11 +1,14 @@
 const assert = require('assert');
+const fs = require('fs');
 const path = require('path');
 
 (async function run() {
+  const dbPath = path.join(__dirname, '..', 'data', `pardogo-cors-${Date.now()}.sqlite`);
+
   process.env.NODE_ENV = 'production';
   process.env.APP_BASE_URL = 'https://example.com';
   process.env.CANONICAL_BASE_URL = 'https://example.com';
-  process.env.DB_PATH = path.join(__dirname, '..', 'data', `pardogo-cors-${Date.now()}.sqlite`);
+  process.env.DB_PATH = dbPath;
   process.env.ADMIN_INITIAL_PHONE = '+5511999999999';
   process.env.ADMIN_INITIAL_PASSWORD = 'SenhaForte!123';
   process.env.CORS_ORIGIN = 'https://example.com';
@@ -13,7 +16,7 @@ const path = require('path');
   process.env.TRUST_PROXY = '1';
   process.env.REQUIRE_SECURE_ENV = '1';
 
-  const { createServer } = require('../server');
+  const { createServer, closeDatabaseSafely } = require('../server');
   const server = createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
@@ -34,6 +37,11 @@ const path = require('path');
     console.log('✓ CORS para origens local/mobile/Render passou');
   } finally {
     await new Promise(resolve => server.close(resolve));
+    closeDatabaseSafely();
+    for (const suffix of ['', '-wal', '-shm']) {
+      const file = `${dbPath}${suffix}`;
+      if (fs.existsSync(file)) fs.rmSync(file, { force: true });
+    }
   }
 })().catch(error => {
   console.error(error.stack || error.message || error);

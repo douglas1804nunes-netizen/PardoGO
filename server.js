@@ -75,6 +75,8 @@ const SSE_PING_MS = Number(envConfig.SSE_PING_MS || 25000);
 const SSE_TICKET_TTL_MS = Number(envConfig.SSE_TICKET_TTL_MS || 60_000);
 const PAYMENT_METHODS = ['Pix', 'Dinheiro'];
 
+const FIXED_FARE_BRL = 20;
+
 const defaultTariffRules = {
   base: 5,
   perKm: 3.2,
@@ -953,9 +955,9 @@ function securityHeaders(extra = {}, req = null) {
       "default-src 'self'",
       "script-src 'self' https://unpkg.com https://accounts.google.com https://apis.google.com",
       "script-src-elem 'self' https://unpkg.com https://accounts.google.com https://apis.google.com",
-      "style-src 'self' 'unsafe-inline' https://unpkg.com",
-      "img-src 'self' data: blob: https://api.qrserver.com https://*.tile.openstreetmap.org https://unpkg.com",
-      "font-src 'self' data:",
+      "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com",
+      "img-src 'self' data: blob: https://api.qrserver.com https://*.tile.openstreetmap.org https://unpkg.com https://images.pexels.com",
+      "font-src 'self' data: https://fonts.gstatic.com",
       connectSrc,
       "frame-src 'self' https://accounts.google.com",
       "frame-ancestors 'none'",
@@ -1380,11 +1382,7 @@ function emitTariffEvent(rules) {
 }
 
 function calculateFare(distanceKm, minutes, rules = defaultTariffRules) {
-  const distance = Math.max(Number(distanceKm || 0), 0);
-  const duration = Math.max(Number(minutes || 0), 0);
-  const raw = Number(rules.base) + distance * Number(rules.perKm) + duration * Number(rules.perMin);
-  const fare = Math.max(Number(rules.min), raw);
-  return Number(fare.toFixed(2));
+  return FIXED_FARE_BRL;
 }
 
 
@@ -1468,11 +1466,22 @@ async function fetchJsonWithTimeout(url, timeoutMs = MAP_TIMEOUT_MS) {
   }
 }
 
+const GEOCODE_VIEWBOX_DEGREES = 0.16;
+
+function geocodeViewBox() {
+  const { lat, lng } = MAP_DEFAULT_CENTER;
+  const left = lng - GEOCODE_VIEWBOX_DEGREES;
+  const right = lng + GEOCODE_VIEWBOX_DEGREES;
+  const top = lat + GEOCODE_VIEWBOX_DEGREES;
+  const bottom = lat - GEOCODE_VIEWBOX_DEGREES;
+  return `${left},${top},${right},${bottom}`;
+}
+
 async function geocodeAddress(query) {
   const term = String(query || '').trim();
   if (!term) return [];
   const expanded = /santa rita/i.test(term) ? term : `${term}, Santa Rita do Pardo, Mato Grosso do Sul, Brasil`;
-  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&addressdetails=1&countrycodes=br&q=${encodeURIComponent(expanded)}`;
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&addressdetails=1&dedupe=1&countrycodes=br&viewbox=${encodeURIComponent(geocodeViewBox())}&bounded=1&q=${encodeURIComponent(expanded)}`;
   const results = await fetchJsonWithTimeout(url).catch(() => []);
   return results
     .filter(item => isSantaRitaAddress(item) && isWithinAllowedCity(item.lat, item.lon))
@@ -2113,7 +2122,7 @@ async function handleApi(req, res, url) {
     }
 
     if (method === 'GET' && pathname === '/api/config') {
-      return send(res, 200, { ok: true, tariffRules: getTariffRules(), stats: stats(), paymentMethods: PAYMENT_METHODS });
+      return send(res, 200, { ok: true, tariffRules: getTariffRules(), fixedFare: FIXED_FARE_BRL, stats: stats(), paymentMethods: PAYMENT_METHODS });
     }
 
     if (method === 'GET' && pathname === '/api/legal') {
@@ -2129,7 +2138,7 @@ async function handleApi(req, res, url) {
       if (!q.trim()) return send(res, 400, { ok: false, error: 'Informe o endereço para buscar.' });
       const results = await geocodeAddress(q);
       if (!results.length) {
-        return send(res, 400, { ok: false, error: 'Endereco fora de Santa Rita do Pardo - MS. Busque um ponto dentro da cidade.' });
+        return send(res, 400, { ok: false, error: 'Não encontramos esse endereço em Santa Rita do Pardo - MS. Tente o nome de uma rua/avenida ou toque no mapa para marcar o ponto exato.' });
       }
       return send(res, 200, { ok: true, query: q, results, fallbackCenter: MAP_DEFAULT_CENTER });
     }
