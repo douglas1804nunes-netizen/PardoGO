@@ -1,16 +1,15 @@
 # PardoGo - Etapa 14
 
-Plataforma de mobilidade local com frontend web/Capacitor, backend Node.js e SQLite persistente no servidor.
+Plataforma de mobilidade local com frontend web/Capacitor, backend Node.js e Postgres (Supabase) como banco de dados.
 
 Arquitetura de producao:
 
-Android Capacitor / PWA -> API HTTPS -> Node.js -> SQLite em disco persistente Render (`/var/data/pardogo.sqlite`).
+Android Capacitor / PWA -> API HTTPS -> Node.js -> Postgres (Supabase).
 
 ## Stack
 
 - Node.js 22 LTS (`>=22.13.0 <25`)
-- `node:sqlite`
-- SQLite
+- PostgreSQL (Supabase) via `pg`
 - SSE/EventSource
 - Capacitor 7 + Android
 - Leaflet/OpenStreetMap
@@ -31,7 +30,7 @@ Importante:
 
 - Nao existe credencial administrativa publica padrao para produção.
 - Nao use `CORS_ORIGIN=*` em produção.
-- Em produção, use `DB_PATH=/var/data/pardogo.sqlite`.
+- Em produção, defina `DATABASE_URL` com a connection string do Postgres no Supabase.
 
 ## Execução local
 
@@ -80,12 +79,11 @@ Configuracao de produção mobile (`public/mobile-config.js`):
 
 ## Deploy Render
 
-Deploy principal usa `render.yaml` com runtime Node (nao Docker):
+Deploy principal usa `render.yaml` com runtime Node:
 
 - build deterministico: `npm ci --omit=dev`
 - health check: `/api/health`
-- disco persistente em `/var/data`
-- `DB_PATH=/var/data/pardogo.sqlite`
+- banco: `DATABASE_URL` apontando para o Postgres do Supabase
 
 Detalhes em `DEPLOY.md`.
 
@@ -94,4 +92,4 @@ Detalhes em `DEPLOY.md`.
 - Segredos apenas em variáveis de ambiente.
 - Nunca commitar `.env`, `.jks`, `.keystore`, `android/keystore.properties`.
 - CORS restrito por ambiente.
-- Shutdown gracioso com fechamento de SSE e SQLite.
+- Shutdown gracioso com fechamento de SSE e do pool Postgres.

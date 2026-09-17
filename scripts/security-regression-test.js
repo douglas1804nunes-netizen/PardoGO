@@ -1,12 +1,11 @@
 const assert = require('assert');
-const path = require('path');
 const { validateEnvConfig } = require('../src/config/env');
 
 (async function run() {
   process.env.NODE_ENV = 'production';
   process.env.APP_BASE_URL = 'https://example.com';
   process.env.CANONICAL_BASE_URL = 'https://example.com';
-  process.env.DB_PATH = path.join(__dirname, '..', 'data', 'security-regression.sqlite');
+  process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://user:pass@localhost:5432/postgres';
   process.env.ADMIN_INITIAL_PHONE = '+5511999999999';
   process.env.ADMIN_INITIAL_PASSWORD = 'SenhaForte!123';
   process.env.CORS_ORIGIN = 'https://example.com';

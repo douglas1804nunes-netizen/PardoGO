@@ -2,16 +2,35 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
+const { Client } = require('pg');
 
 const ROOT = path.join(__dirname, '..');
-const DB = path.join(ROOT, 'data', 'pardogo-test.sqlite');
+const DATABASE_URL = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
 const PORT = 5199;
 const BASE = `http://localhost:${PORT}`;
 const ADMIN_PHONE = '67990000001';
 const ADMIN_PASSWORD = 'Admin#PardoGo123';
+const TEST_TABLES = [
+  'audit_logs', 'oauth_accounts', 'sessions', 'ride_reports', 'support_tickets',
+  'ride_ratings', 'ride_contacts', 'pix_topups', 'wallet_transactions', 'rides',
+  'users', 'tariff_rules', 'app_meta'
+];
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function resetTestDatabase() {
+  const client = new Client({
+    connectionString: DATABASE_URL,
+    ssl: /localhost|127\.0\.0\.1/i.test(DATABASE_URL) ? false : { rejectUnauthorized: false }
+  });
+  await client.connect();
+  try {
+    await client.query(`DROP TABLE IF EXISTS ${TEST_TABLES.join(', ')} CASCADE;`);
+  } finally {
+    await client.end();
+  }
 }
 
 async function request(pathname, options = {}) {
@@ -113,17 +132,17 @@ async function openSse(token) {
 }
 
 async function run() {
-  for (const suffix of ['', '-shm', '-wal']) {
-    const file = `${DB}${suffix}`;
-    if (fs.existsSync(file)) fs.rmSync(file, { force: true });
+  if (!DATABASE_URL) {
+    throw new Error('Defina DATABASE_URL (ou TEST_DATABASE_URL) apontando para um banco Postgres/Supabase de testes antes de rodar npm test.');
   }
+  await resetTestDatabase();
 
   const server = spawn(process.execPath, ['--no-warnings', 'server.js'], {
     cwd: ROOT,
     env: {
       ...process.env,
       PORT: String(PORT),
-      DB_PATH: DB,
+      DATABASE_URL,
       NODE_ENV: 'development',
       ADMIN_INITIAL_PHONE: ADMIN_PHONE,
       ADMIN_INITIAL_PASSWORD: ADMIN_PASSWORD,
@@ -194,11 +213,9 @@ async function run() {
       throw new Error('CORS não aceitou origem https://pardogo-8yn0.onrender.com em /api/health.');
     }
 
-    if (!health.features.includes('sqlite') || !health.features.includes('secure-sessions') || !health.features.includes('security-headers') || !health.features.includes('rate-limit') || !health.features.includes('production-healthcheck') || !health.features.includes('deploy-ready') || !health.features.includes('route-calculation') || !health.features.includes('realtime-sse') || !health.features.includes('ride-cancellation') || !health.features.includes('ride-contact') || !health.features.includes('ride-rating') || !health.features.includes('quality-dashboard') || !health.features.includes('support-tickets') || !health.features.includes('safety-reports') || !health.features.includes('driver-documents') || !health.features.includes('legal-lgpd')) {
-      throw new Error('Features de SQLite/sessões/produção/rota/tempo real/cancelamento/contato não apareceram no health check.');
+    if (!health.features.includes('postgresql') || !health.features.includes('secure-sessions') || !health.features.includes('security-headers') || !health.features.includes('rate-limit') || !health.features.includes('production-healthcheck') || !health.features.includes('deploy-ready') || !health.features.includes('route-calculation') || !health.features.includes('realtime-sse') || !health.features.includes('ride-cancellation') || !health.features.includes('ride-contact') || !health.features.includes('ride-rating') || !health.features.includes('quality-dashboard') || !health.features.includes('support-tickets') || !health.features.includes('safety-reports') || !health.features.includes('driver-documents') || !health.features.includes('legal-lgpd')) {
+      throw new Error('Features de PostgreSQL/sessões/produção/rota/tempo real/cancelamento/contato não apareceram no health check.');
     }
-
-    if (!fs.existsSync(DB)) throw new Error('Banco SQLite não foi criado.');
 
     await request('/api/auth/register', {
       method: 'POST',
@@ -485,7 +502,7 @@ async function run() {
       headers: { Authorization: `Bearer ${adminLogin.token}` }
     });
 
-    if (dashboard.database.type !== 'SQLite') throw new Error('Painel não informou SQLite.');
+    if (dashboard.database.type !== 'PostgreSQL') throw new Error('Painel não informou PostgreSQL.');
     if (dashboard.stats.ridesFinished < 1) throw new Error('Corrida finalizada não apareceu no painel.');
     if (dashboard.stats.ridesCancelled < 1) throw new Error('Corrida cancelada não apareceu no painel.');
     if (dashboard.stats.contactsLogged < 2) throw new Error('Contatos não apareceram nas métricas.');
@@ -558,7 +575,7 @@ async function run() {
       throw new Error('Recuperação automática para API oficial não foi encontrada no cliente.');
     }
 
-    console.log('✓ backend SQLite validado');
+    console.log('✓ backend PostgreSQL validado');
     console.log('✓ health check, preflight OPTIONS e CORS mobile validados');
     console.log('✓ regressão front-end de URL/API/login validada');
     console.log('✓ login com sessão expirada/revogável validado');
@@ -576,10 +593,7 @@ async function run() {
   } finally {
     server.kill();
     await wait(300);
-    for (const suffix of ['', '-shm', '-wal']) {
-      const file = `${DB}${suffix}`;
-      if (fs.existsSync(file)) fs.rmSync(file, { force: true });
-    }
+    await resetTestDatabase();
   }
 }
 

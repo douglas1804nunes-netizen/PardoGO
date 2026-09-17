@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 
 const root = path.join(__dirname, '..');
-const dbPath = process.env.DB_PATH || path.join(root, 'data', 'pardogo.sqlite');
 const required = [
   'server.js',
   'public/index.html',
@@ -20,7 +19,7 @@ console.log(`Node: ${process.version}`);
 const major = Number(process.versions.node.split('.')[0]);
 const minor = Number(process.versions.node.split('.')[1]);
 if (major < 22 || (major === 22 && minor < 5)) {
-  console.error('✗ Node precisa ser 22.13 ou superior (e menor que 25) por causa do node:sqlite estável.');
+  console.error('✗ Node precisa ser 22.13 ou superior (e menor que 25).');
   failed = true;
 } else {
   console.log('✓ Node compatível');
@@ -32,12 +31,11 @@ for (const item of required) {
   if (!exists) failed = true;
 }
 
-const dataDir = path.dirname(dbPath);
-if (!fs.existsSync(dataDir)) {
-  console.error(`✗ Pasta do banco não existe: ${dataDir}`);
+if (!process.env.DATABASE_URL) {
+  console.error('✗ DATABASE_URL não configurada (connection string do Postgres/Supabase).');
   failed = true;
 } else {
-  console.log(`✓ Pasta do banco: ${dataDir}`);
+  console.log('✓ DATABASE_URL configurada');
 }
 
 if (process.env.NODE_ENV === 'production' && (!process.env.ADMIN_INITIAL_PASSWORD || process.env.ADMIN_INITIAL_PASSWORD === '123456')) {

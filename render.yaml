@@ -13,8 +13,8 @@ services:
         value: https://pardogo-8yn0.onrender.com
       - key: CANONICAL_BASE_URL
         value: https://pardogo-8yn0.onrender.com
-      - key: DB_PATH
-        value: /var/data/pardogo.sqlite
+      - key: DATABASE_URL
+        sync: false
       - key: ADMIN_INITIAL_PHONE
         sync: false
       - key: ADMIN_INITIAL_PASSWORD
@@ -51,7 +51,3 @@ services:
         value: "120"
       - key: GOOGLE_CLIENT_ID
         sync: false
-    disk:
-      name: pardogo-data
-      mountPath: /var/data
-      sizeGB: 1

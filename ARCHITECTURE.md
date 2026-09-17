@@ -2,7 +2,7 @@
 
 ## Visão geral
 
-Android Capacitor / PWA -> API HTTPS -> backend Node.js -> SQLite persistente no Render.
+Android Capacitor / PWA -> API HTTPS -> backend Node.js -> Postgres (Supabase).
 
 ## Componentes
 
@@ -29,12 +29,12 @@ Android Capacitor / PWA -> API HTTPS -> backend Node.js -> SQLite persistente no
 	- admin obrigatório e forte
 	- URL HTTPS
 	- CORS sem wildcard
-	- DB fora de diretório temporário
+	- `DATABASE_URL` válida (Postgres)
 
-4. Persistência SQLite
-- Banco principal configurável por `DB_PATH`.
-- Em Render: `/var/data/pardogo.sqlite` (disco persistente).
-- Migrations retrocompatíveis em bootstrap.
+4. Persistência Postgres (`src/db/pg.js`)
+- Banco principal configurável por `DATABASE_URL` (Supabase).
+- Pool de conexões via `pg`, com `AsyncLocalStorage` para transações.
+- Schema criado/atualizado automaticamente no boot (`migrate()`/`seed()`).
 
 ## Pagamento / Corridas
 
@@ -46,12 +46,4 @@ Android Capacitor / PWA -> API HTTPS -> backend Node.js -> SQLite persistente no
 
 - Fonte principal de deploy: `render.yaml` + `package.json`.
 - Build determinístico: `npm ci --omit=dev`.
-- Health endpoint real: `/api/health` com probe SQLite.
-
-## Docker
-
-`Dockerfile` é alternativa de execução, mantendo:
-
-- install determinístico (`npm ci --omit=dev`)
-- sem cópia de `.env`
-- `DB_PATH` apontando para volume persistente (`/var/data`)
+- Health endpoint real: `/api/health` com probe Postgres.

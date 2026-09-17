@@ -7,7 +7,6 @@
     "start": "node --no-warnings server.js",
     "test": "node --no-warnings scripts/test.js",
     "doctor": "node --no-warnings scripts/doctor.js",
-    "backup": "node --no-warnings scripts/backup.js",
     "mobile:check": "node --no-warnings scripts/mobile-check.js",
     "android:build:debug": "node --no-warnings scripts/android-build-debug.js",
     "cap:add:android": "npx cap add android",
@@ -22,8 +21,8 @@
     "deploy",
     "https",
     "dominio",
-    "backup",
-    "sqlite",
+    "postgresql",
+    "supabase",
     "node",
     "pwa",
     "leaflet",
@@ -40,10 +39,11 @@
   "author": "VDB / Bianca",
   "license": "MIT",
   "dependencies": {
-    "@capacitor/core": "^7.4.3"
+    "@capacitor/core": "^7.4.3",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
-    "@capacitor/cli": "^7.4.3",
-    "@capacitor/android": "^7.4.3"
+    "@capacitor/android": "^7.4.3",
+    "@capacitor/cli": "^7.4.3"
   }
 }

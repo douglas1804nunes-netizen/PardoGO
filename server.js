@@ -2,8 +2,16 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { DatabaseSync } = require('node:sqlite');
 const { getEnvConfig, validateEnvConfig } = require('./src/config/env');
+const {
+  openPool,
+  dbExec,
+  dbGet,
+  dbAll,
+  dbRun,
+  closePool,
+  isUniqueConstraintError
+} = require('./src/db/pg');
 
 const envConfig = getEnvConfig();
 validateEnvConfig(envConfig);
@@ -11,8 +19,7 @@ validateEnvConfig(envConfig);
 const APP_VERSION = '1.4.0';
 const NODE_ENV = envConfig.NODE_ENV;
 const PORT = Number(envConfig.PORT || 5173);
-const DATA_DIR = path.join(__dirname, 'data');
-const DB_PATH = envConfig.DB_PATH || path.join(DATA_DIR, 'pardogo.sqlite');
+const DATABASE_URL = envConfig.DATABASE_URL;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const APP_BASE_URL = envConfig.APP_BASE_URL;
 const CANONICAL_BASE_URL = envConfig.CANONICAL_BASE_URL || envConfig.APP_BASE_URL;
@@ -86,32 +93,19 @@ const defaultTariffRules = {
   city: 'Santa Rita do Pardo - MS'
 };
 
-let db;
 let isDbClosed = false;
 let isShuttingDown = false;
 const ssePingIntervals = new Set();
 
-function openDatabase() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  db = new DatabaseSync(DB_PATH);
+async function openDatabase() {
+  openPool(DATABASE_URL);
   isDbClosed = false;
-  db.exec('PRAGMA journal_mode = WAL;');
-  db.exec('PRAGMA foreign_keys = ON;');
-  db.exec('PRAGMA busy_timeout = 5000;');
-  migrate();
-  seed();
-  return db;
+  await migrate();
+  await seed();
 }
 
-function addColumnIfMissing(tableName, columnName, definition) {
-  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all().map(column => column.name);
-  if (!columns.includes(columnName)) {
-    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition};`);
-  }
-}
-
-function migrate() {
-  db.exec(`
+async function migrate() {
+  await dbExec(`
     CREATE TABLE IF NOT EXISTS app_meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -156,6 +150,7 @@ function migrate() {
 
     CREATE INDEX IF NOT EXISTS idx_users_role_status ON users(role, status);
     CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_single_admin_role ON users(role) WHERE role = 'admin';
 
     CREATE TABLE IF NOT EXISTS rides (
       id TEXT PRIMARY KEY,
@@ -180,6 +175,7 @@ function migrate() {
       route_source TEXT DEFAULT 'manual',
       route_geometry TEXT,
       straight_line_km REAL,
+      idempotency_key TEXT,
       created_at TEXT NOT NULL,
       accepted_at TEXT,
       finished_at TEXT,
@@ -194,6 +190,9 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS idx_rides_passenger ON rides(passenger_id);
     CREATE INDEX IF NOT EXISTS idx_rides_driver ON rides(driver_id);
     CREATE INDEX IF NOT EXISTS idx_rides_created ON rides(created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_passenger_idempotency
+    ON rides(passenger_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS wallet_transactions (
       id TEXT PRIMARY KEY,
@@ -211,6 +210,8 @@ function migrate() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_wallet_transactions_user_created ON wallet_transactions(user_id, created_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_transactions_idempotency ON wallet_transactions(idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS pix_topups (
       id TEXT PRIMARY KEY,
@@ -233,6 +234,8 @@ function migrate() {
 
     CREATE INDEX IF NOT EXISTS idx_pix_topups_user_created ON pix_topups(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_pix_topups_status_created ON pix_topups(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_pix_topups_txid ON pix_topups(txid);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_pix_topups_txid_unique ON pix_topups(txid);
 
     CREATE TABLE IF NOT EXISTS ride_contacts (
       id TEXT PRIMARY KEY,
@@ -347,69 +350,23 @@ function migrate() {
 
     CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);
   `);
-
-  addColumnIfMissing('rides', 'route_source', 'TEXT DEFAULT "manual"');
-  addColumnIfMissing('rides', 'route_geometry', 'TEXT');
-  addColumnIfMissing('rides', 'straight_line_km', 'REAL');
-  addColumnIfMissing('rides', 'driver_phone', 'TEXT');
-  addColumnIfMissing('users', 'cnh_number', 'TEXT DEFAULT ""');
-  addColumnIfMissing('users', 'vehicle_model', 'TEXT DEFAULT ""');
-  addColumnIfMissing('users', 'vehicle_color', 'TEXT DEFAULT ""');
-  addColumnIfMissing('users', 'document_status', 'TEXT NOT NULL DEFAULT "not_sent"');
-  addColumnIfMissing('users', 'documents_note', 'TEXT DEFAULT ""');
-  addColumnIfMissing('users', 'terms_accepted_at', 'TEXT');
-  addColumnIfMissing('users', 'privacy_accepted_at', 'TEXT');
-  addColumnIfMissing('users', 'wallet_balance', 'REAL NOT NULL DEFAULT 0');
-  addColumnIfMissing('rides', 'cancelled_at', 'TEXT');
-  addColumnIfMissing('rides', 'cancelled_by', 'TEXT');
-  addColumnIfMissing('rides', 'cancel_reason', 'TEXT');
-  addColumnIfMissing('rides', 'idempotency_key', 'TEXT');
-  addColumnIfMissing('wallet_transactions', 'idempotency_key', 'TEXT');
-  addColumnIfMissing('wallet_transactions', 'status', 'TEXT NOT NULL DEFAULT "posted"');
-  addColumnIfMissing('wallet_transactions', 'updated_at', 'TEXT');
-
-  db.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_transactions_idempotency ON wallet_transactions(idempotency_key)
-    WHERE idempotency_key IS NOT NULL;
-
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_passenger_idempotency
-    ON rides(passenger_id, idempotency_key)
-    WHERE idempotency_key IS NOT NULL;
-
-    CREATE INDEX IF NOT EXISTS idx_pix_topups_txid ON pix_topups(txid);
-  `);
-
-  const duplicatePixTxid = db.prepare(`
-    SELECT txid, COUNT(*) AS count
-    FROM pix_topups
-    WHERE txid IS NOT NULL AND TRIM(txid) <> ''
-    GROUP BY txid
-    HAVING COUNT(*) > 1
-    LIMIT 1
-  `).get();
-
-  if (!duplicatePixTxid) {
-    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_pix_topups_txid_unique ON pix_topups(txid);');
-  } else {
-    console.warn(`Aviso: duplicidade de txid detectada em pix_topups (txid=${duplicatePixTxid.txid}). Índice UNIQUE não aplicado.`);
-  }
 }
 
-function seed() {
+async function seed() {
   const now = new Date().toISOString();
-  const version = db.prepare('SELECT value FROM app_meta WHERE key = ?').get('version');
+  const version = await dbGet('SELECT value FROM app_meta WHERE key = ?', ['version']);
   if (!version) {
-    db.prepare('INSERT INTO app_meta (key, value) VALUES (?, ?)').run('appName', 'PardoGo');
-    db.prepare('INSERT INTO app_meta (key, value) VALUES (?, ?)').run('version', APP_VERSION);
-    db.prepare('INSERT INTO app_meta (key, value) VALUES (?, ?)').run('createdAt', now);
+    await dbRun('INSERT INTO app_meta (key, value) VALUES (?, ?)', ['appName', 'PardoGo']);
+    await dbRun('INSERT INTO app_meta (key, value) VALUES (?, ?)', ['version', APP_VERSION]);
+    await dbRun('INSERT INTO app_meta (key, value) VALUES (?, ?)', ['createdAt', now]);
   }
 
-  const rules = db.prepare('SELECT id FROM tariff_rules WHERE id = 1').get();
+  const rules = await dbGet('SELECT id FROM tariff_rules WHERE id = 1');
   if (!rules) {
-    db.prepare(`
+    await dbRun(`
       INSERT INTO tariff_rules (id, base, per_km, per_min, min, driver_share_percent, city, updated_at)
       VALUES (1, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       defaultTariffRules.base,
       defaultTariffRules.perKm,
       defaultTariffRules.perMin,
@@ -417,26 +374,10 @@ function seed() {
       defaultTariffRules.driverSharePercent,
       defaultTariffRules.city,
       now
-    );
+    ]);
   }
 
-  const legacyAdmin = db.prepare('SELECT id, role, status FROM users WHERE phone = ?').get(ADMIN_LEGACY_ALIAS);
-  const targetAdmin = db.prepare('SELECT id FROM users WHERE phone = ?').get(ADMIN_INITIAL_PHONE);
-  if (legacyAdmin && !targetAdmin) {
-    db.prepare(`
-      UPDATE users
-      SET phone = ?,
-          role = 'admin',
-          status = 'active',
-          password_hash = ?,
-          online = 0,
-          updated_at = ?
-      WHERE id = ?
-    `).run(ADMIN_INITIAL_PHONE, hashPassword(ADMIN_INITIAL_PASSWORD), now, legacyAdmin.id);
-    audit(legacyAdmin.id, 'migrate_admin_phone', 'user', legacyAdmin.id, { from: ADMIN_LEGACY_ALIAS, to: ADMIN_INITIAL_PHONE });
-  }
-
-  const admin = db.prepare('SELECT id, role, status FROM users WHERE phone = ?').get(ADMIN_INITIAL_PHONE);
+  const admin = await dbGet('SELECT id, role, status FROM users WHERE phone = ?', [ADMIN_INITIAL_PHONE]);
   if (!admin) {
     const adminUser = createUserObject({
       name: 'Administrador PardoGo',
@@ -445,40 +386,34 @@ function seed() {
       role: 'admin',
       status: 'active'
     });
-    insertUser(adminUser);
+    await insertUser(adminUser);
   } else {
-    db.prepare(`
+    await dbRun(`
       UPDATE users
       SET role = 'admin',
           status = 'active',
           password_hash = ?,
           updated_at = ?
       WHERE id = ?
-    `).run(hashPassword(ADMIN_INITIAL_PASSWORD), now, admin.id);
-    audit(admin.id, 'repair_admin_alias', 'user', admin.id, { phone: ADMIN_INITIAL_PHONE });
+    `, [hashPassword(ADMIN_INITIAL_PASSWORD), now, admin.id]);
+    await audit(admin.id, 'repair_admin_alias', 'user', admin.id, { phone: ADMIN_INITIAL_PHONE });
   }
 
-  const canonicalAdmin = db.prepare('SELECT id FROM users WHERE phone = ?').get(ADMIN_INITIAL_PHONE);
-  const otherAdmins = db.prepare('SELECT id, phone FROM users WHERE role = ? AND phone <> ?').all('admin', ADMIN_INITIAL_PHONE);
+  const canonicalAdmin = await dbGet('SELECT id FROM users WHERE phone = ?', [ADMIN_INITIAL_PHONE]);
+  const otherAdmins = await dbAll('SELECT id, phone FROM users WHERE role = ? AND phone <> ?', ['admin', ADMIN_INITIAL_PHONE]);
   if (otherAdmins.length) {
-    db.prepare(`
+    await dbRun(`
       UPDATE users
       SET role = 'passenger',
           status = CASE WHEN status = 'blocked' THEN 'blocked' ELSE 'active' END,
           online = 0,
           updated_at = ?
       WHERE role = 'admin' AND phone <> ?
-    `).run(now, ADMIN_INITIAL_PHONE);
-    audit(canonicalAdmin?.id || null, 'enforce_single_admin', 'user', canonicalAdmin?.id || null, {
+    `, [now, ADMIN_INITIAL_PHONE]);
+    await audit(canonicalAdmin?.id || null, 'enforce_single_admin', 'user', canonicalAdmin?.id || null, {
       keptAdminPhone: ADMIN_INITIAL_PHONE,
       demotedAdmins: otherAdmins.map(item => item.phone)
     });
-  }
-
-  try {
-    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_single_admin_role ON users(role) WHERE role = 'admin';");
-  } catch (error) {
-    console.warn(`Aviso: não foi possível reforçar índice de admin único: ${error.message}`);
   }
 }
 
@@ -547,33 +482,33 @@ function tokenHash(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex');
 }
 
-function createSession(user, req) {
+async function createSession(user, req) {
   const token = crypto.randomBytes(32).toString('base64url');
   const token_hash = tokenHash(token);
   const created_at = nowIso();
   const expires_at = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  db.prepare(`
+  await dbRun(`
     INSERT INTO sessions (token_hash, user_id, user_agent, ip, created_at, expires_at, revoked_at)
     VALUES (?, ?, ?, ?, ?, ?, NULL)
-  `).run(
+  `, [
     token_hash,
     user.id,
     String(req.headers['user-agent'] || '').slice(0, 300),
     String(req.socket.remoteAddress || '').slice(0, 80),
     created_at,
     expires_at
-  );
-  audit(user.id, 'login', 'session', token_hash, { expiresAt: expires_at });
+  ]);
+  await audit(user.id, 'login', 'session', token_hash, { expiresAt: expires_at });
   return { token, expiresAt: expires_at };
 }
 
-function revokeSession(token) {
+async function revokeSession(token) {
   if (!token) return;
-  db.prepare('UPDATE sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL').run(nowIso(), tokenHash(token));
+  await dbRun('UPDATE sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL', [nowIso(), tokenHash(token)]);
 }
 
-function cleanupSessions() {
-  db.prepare('DELETE FROM sessions WHERE expires_at < ? OR revoked_at IS NOT NULL').run(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+async function cleanupSessions() {
+  await dbRun('DELETE FROM sessions WHERE expires_at < ? OR revoked_at IS NOT NULL', [new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()]);
 }
 
 function createUserObject({ name, phone, password, role, vehicle, plate, cnhNumber, vehicleModel, vehicleColor, documentStatus, documentsNote, termsAccepted, privacyAccepted, status }) {
@@ -602,14 +537,14 @@ function createUserObject({ name, phone, password, role, vehicle, plate, cnhNumb
   };
 }
 
-function insertUser(user) {
-  db.prepare(`
+async function insertUser(user) {
+  await dbRun(`
     INSERT INTO users (
       id, name, phone, password_hash, role, status, online, wallet_balance, vehicle, plate,
       cnh_number, vehicle_model, vehicle_color, document_status, documents_note, terms_accepted_at, privacy_accepted_at,
       last_lat, last_lng, last_accuracy, last_location_updated_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `, [
     user.id,
     user.name,
     user.phone,
@@ -633,8 +568,8 @@ function insertUser(user) {
     user.lastLocation?.updatedAt || null,
     user.createdAt,
     user.updatedAt
-  );
-  audit(user.id, 'create_user', 'user', user.id, { role: user.role, status: user.status });
+  ]);
+  await audit(user.id, 'create_user', 'user', user.id, { role: user.role, status: user.status });
 }
 
 function rowToUser(row) {
@@ -669,38 +604,42 @@ function rowToUser(row) {
   };
 }
 
-function publicUser(user) {
+async function publicUser(user) {
   if (!user) return null;
   const { passwordHash, ...safe } = user;
   if (safe.role === 'driver') {
-    const summary = getDriverRatingSummary(safe.id);
+    const summary = await getDriverRatingSummary(safe.id);
     safe.reviewsCount = summary.reviewsCount;
     safe.averageRating = summary.averageRating;
   }
   return safe;
 }
 
-function getUserByPhone(phone) {
+function mapAsync(items, fn) {
+  return Promise.all(items.map(fn));
+}
+
+async function getUserByPhone(phone) {
   const normalized = normalizePhone(phone);
-  let row = db.prepare('SELECT * FROM users WHERE phone = ?').get(normalized);
+  let row = await dbGet('SELECT * FROM users WHERE phone = ?', [normalized]);
   if (!row) {
     const legacy = String(phone || '').trim().toLowerCase();
     if (legacy && legacy !== normalized) {
-      row = db.prepare('SELECT * FROM users WHERE phone = ?').get(legacy);
+      row = await dbGet('SELECT * FROM users WHERE phone = ?', [legacy]);
     }
   }
   return rowToUser(row);
 }
 
-function getUserById(id) {
-  return rowToUser(db.prepare('SELECT * FROM users WHERE id = ?').get(id));
+async function getUserById(id) {
+  return rowToUser(await dbGet('SELECT * FROM users WHERE id = ?', [id]));
 }
 
-function getOAuthAccount(provider, providerUserId) {
-  return db.prepare('SELECT * FROM oauth_accounts WHERE provider = ? AND provider_user_id = ?').get(provider, providerUserId);
+async function getOAuthAccount(provider, providerUserId) {
+  return dbGet('SELECT * FROM oauth_accounts WHERE provider = ? AND provider_user_id = ?', [provider, providerUserId]);
 }
 
-function createOAuthAccount({ provider, providerUserId, userId, email }) {
+async function createOAuthAccount({ provider, providerUserId, userId, email }) {
   const now = nowIso();
   const record = {
     id: crypto.randomUUID(),
@@ -711,17 +650,17 @@ function createOAuthAccount({ provider, providerUserId, userId, email }) {
     createdAt: now,
     updatedAt: now
   };
-  db.prepare(`
+  await dbRun(`
     INSERT INTO oauth_accounts (id, provider, provider_user_id, user_id, email, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(record.id, record.provider, record.providerUserId, record.userId, record.email, record.createdAt, record.updatedAt);
+  `, [record.id, record.provider, record.providerUserId, record.userId, record.email, record.createdAt, record.updatedAt]);
   return record;
 }
 
-function generateOAuthPlaceholderPhone() {
+async function generateOAuthPlaceholderPhone() {
   for (let i = 0; i < 10; i++) {
     const candidate = `99${String(Date.now()).slice(-8)}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
-    if (!getUserByPhone(candidate)) return candidate;
+    if (!(await getUserByPhone(candidate))) return candidate;
   }
   return `99${String(Date.now()).slice(-8)}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
 }
@@ -751,29 +690,8 @@ async function verifyGoogleCredential(credential) {
   };
 }
 
-function getAllUsers() {
-  return db.prepare('SELECT * FROM users ORDER BY created_at DESC').all().map(rowToUser);
-}
-
-function isUniqueConstraintError(error) {
-  const message = String(error?.message || '').toLowerCase();
-  return message.includes('unique constraint failed');
-}
-
-function withImmediateTransaction(work) {
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    const result = work();
-    db.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      db.exec('ROLLBACK');
-    } catch {
-      // Sem acao: rollback ja foi aplicado ou transacao encerrada.
-    }
-    throw error;
-  }
+async function getAllUsers() {
+  return (await dbAll('SELECT * FROM users ORDER BY created_at DESC')).map(rowToUser);
 }
 
 function normalizeIdempotencyKey(value) {
@@ -786,8 +704,8 @@ function normalizeIdempotencyKey(value) {
   return normalized;
 }
 
-function getTariffRules() {
-  const row = db.prepare('SELECT * FROM tariff_rules WHERE id = 1').get();
+async function getTariffRules() {
+  const row = await dbGet('SELECT * FROM tariff_rules WHERE id = 1');
   return {
     base: row.base,
     perKm: row.per_km,
@@ -798,16 +716,16 @@ function getTariffRules() {
   };
 }
 
-function updateTariffRules(next) {
-  db.prepare(`
+async function updateTariffRules(next) {
+  await dbRun(`
     UPDATE tariff_rules
     SET base = ?, per_km = ?, per_min = ?, min = ?, driver_share_percent = ?, city = ?, updated_at = ?
     WHERE id = 1
-  `).run(next.base, next.perKm, next.perMin, next.min, next.driverSharePercent, next.city || defaultTariffRules.city, nowIso());
-  audit(null, 'update_tariff', 'tariff_rules', '1', next);
+  `, [next.base, next.perKm, next.perMin, next.min, next.driverSharePercent, next.city || defaultTariffRules.city, nowIso()]);
+  await audit(null, 'update_tariff', 'tariff_rules', '1', next);
 }
 
-function rowToRide(row) {
+async function rowToRide(row) {
   if (!row) return null;
   return {
     id: row.id,
@@ -830,7 +748,7 @@ function rowToRide(row) {
     routeSource: row.route_source || 'manual',
     routeGeometry: row.route_geometry ? JSON.parse(row.route_geometry) : null,
     straightLineKm: row.straight_line_km,
-    rating: getRideRating(row.id),
+    rating: await getRideRating(row.id),
     createdAt: row.created_at,
     acceptedAt: row.accepted_at,
     finishedAt: row.finished_at,
@@ -855,45 +773,44 @@ function rowToRating(row) {
   };
 }
 
-function getRideRating(rideId) {
-  return rowToRating(db.prepare('SELECT * FROM ride_ratings WHERE ride_id = ?').get(rideId));
+async function getRideRating(rideId) {
+  return rowToRating(await dbGet('SELECT * FROM ride_ratings WHERE ride_id = ?', [rideId]));
 }
 
-function getDriverRatingSummary(driverId) {
-  const row = db.prepare('SELECT COUNT(*) AS count, COALESCE(AVG(rating), 0) AS average FROM ride_ratings WHERE driver_id = ?').get(driverId);
+async function getDriverRatingSummary(driverId) {
+  const row = await dbGet('SELECT COUNT(*) AS count, COALESCE(AVG(rating), 0) AS average FROM ride_ratings WHERE driver_id = ?', [driverId]);
   return {
-    reviewsCount: row.count || 0,
+    reviewsCount: Number(row.count || 0),
     averageRating: Number(Number(row.average || 0).toFixed(2))
   };
 }
 
-function upsertRideRating({ ride, passenger, rating, comment }) {
+async function upsertRideRating({ ride, passenger, rating, comment }) {
   const now = nowIso();
-  const existing = getRideRating(ride.id);
+  const existing = await getRideRating(ride.id);
   if (existing) {
-    db.prepare('UPDATE ride_ratings SET rating = ?, comment = ?, updated_at = ? WHERE ride_id = ?')
-      .run(rating, comment, now, ride.id);
-    audit(passenger.id, 'update_ride_rating', 'ride', ride.id, { rating, comment });
+    await dbRun('UPDATE ride_ratings SET rating = ?, comment = ?, updated_at = ? WHERE ride_id = ?', [rating, comment, now, ride.id]);
+    await audit(passenger.id, 'update_ride_rating', 'ride', ride.id, { rating, comment });
   } else {
-    db.prepare(`
+    await dbRun(`
       INSERT INTO ride_ratings (id, ride_id, passenger_id, driver_id, rating, comment, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(crypto.randomUUID(), ride.id, ride.passengerId, ride.driverId, rating, comment, now, now);
-    audit(passenger.id, 'create_ride_rating', 'ride', ride.id, { rating, comment });
+    `, [crypto.randomUUID(), ride.id, ride.passengerId, ride.driverId, rating, comment, now, now]);
+    await audit(passenger.id, 'create_ride_rating', 'ride', ride.id, { rating, comment });
   }
-  const updatedRide = getRideById(ride.id);
-  emitRideEvent('rated', updatedRide, { rating: updatedRide.rating });
+  const updatedRide = await getRideById(ride.id);
+  await emitRideEvent('rated', updatedRide, { rating: updatedRide.rating });
   return updatedRide.rating;
 }
 
-function insertRide(ride) {
-  db.prepare(`
+async function insertRide(ride) {
+  await dbRun(`
     INSERT INTO rides (
       id, passenger_id, passenger_name, passenger_phone, driver_id, driver_name, driver_phone, status,
       origin, destination, distance_km, minutes, fare, payment_method, notes,
       pickup_lat, pickup_lng, destination_lat, destination_lng, route_source, route_geometry, straight_line_km, idempotency_key, created_at, accepted_at, finished_at, cancelled_at, cancelled_by, cancel_reason
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `, [
     ride.id,
     ride.passengerId,
     ride.passengerName,
@@ -923,16 +840,16 @@ function insertRide(ride) {
     ride.cancelledAt || null,
     ride.cancelledBy || null,
     ride.cancelReason || null
-  );
-  audit(ride.passengerId, 'create_ride', 'ride', ride.id, { fare: ride.fare, status: ride.status });
+  ]);
+  await audit(ride.passengerId, 'create_ride', 'ride', ride.id, { fare: ride.fare, status: ride.status });
 }
 
-function getRideById(id) {
-  return rowToRide(db.prepare('SELECT * FROM rides WHERE id = ?').get(id));
+async function getRideById(id) {
+  return rowToRide(await dbGet('SELECT * FROM rides WHERE id = ?', [id]));
 }
 
-function getAllRides() {
-  return db.prepare('SELECT * FROM rides ORDER BY created_at DESC').all().map(rowToRide);
+async function getAllRides() {
+  return mapAsync(await dbAll('SELECT * FROM rides ORDER BY created_at DESC'), rowToRide);
 }
 
 
@@ -1059,7 +976,7 @@ function issueSseTicket(userId) {
   return ticket;
 }
 
-function consumeSseTicket(ticket) {
+async function consumeSseTicket(ticket) {
   const raw = String(ticket || '').trim();
   if (!raw) return null;
   const entry = sseTickets.get(raw);
@@ -1125,9 +1042,6 @@ function validateProductionConfig() {
   if (NODE_ENV === 'production' && !FORCE_HTTPS) {
     warnings.push('Ative FORCE_HTTPS=1 quando estiver atrás de proxy com HTTPS.');
   }
-  if (NODE_ENV === 'production' && DB_PATH.includes('/tmp')) {
-    warnings.push('Não use banco SQLite dentro de pasta temporária em produção.');
-  }
   if (NODE_ENV === 'production' && CORS_ALLOW_ALL) {
     warnings.push('Evite CORS_ORIGIN=* em produção. Defina origem explícita do app/web.');
   }
@@ -1152,9 +1066,8 @@ function systemChecklist() {
     baseUrl: APP_BASE_URL,
     port: PORT,
     database: {
-      type: 'SQLite',
-      path: DB_PATH,
-      exists: fs.existsSync(DB_PATH)
+      type: 'PostgreSQL',
+      provider: 'Supabase'
     },
     security: {
       forceHttps: FORCE_HTTPS,
@@ -1172,7 +1085,7 @@ function systemChecklist() {
       'Configurar domínio apontando para o servidor.',
       'Ativar HTTPS no proxy/host.',
       'Trocar ADMIN_INITIAL_PASSWORD no primeiro deploy.',
-      'Criar rotina de backup do arquivo SQLite.',
+      'Configurar backups automáticos do banco no painel do Supabase.',
       'Testar cadastro, corrida, tempo real e mapa no domínio final.',
       'Revisar termos, privacidade e regras municipais antes da operação real.',
       'Configurar CORS_ORIGIN para permitir o app Android/Capacitor acessar a API.',
@@ -1222,22 +1135,22 @@ function getBearerToken(req) {
   return header.startsWith('Bearer ') ? header.slice(7) : '';
 }
 
-function getAuthUser(req) {
+async function getAuthUser(req) {
   const token = getBearerToken(req);
   if (!token) return null;
-  const row = db.prepare(`
+  const row = await dbGet(`
     SELECT u.*
     FROM sessions s
     JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ?
       AND s.revoked_at IS NULL
       AND s.expires_at > ?
-  `).get(tokenHash(token), nowIso());
+  `, [tokenHash(token), nowIso()]);
   return rowToUser(row);
 }
 
-function requireAuth(req, res, roles = []) {
-  const user = getAuthUser(req);
+async function requireAuth(req, res, roles = []) {
+  const user = await getAuthUser(req);
   if (!user) {
     send(res, 401, { ok: false, error: 'Faça login para continuar.' });
     return null;
@@ -1261,16 +1174,16 @@ function requireApprovedDriver(user, res) {
 }
 
 
-function getAuthUserFromToken(token) {
+async function getAuthUserFromToken(token) {
   if (!token) return null;
-  const row = db.prepare(`
+  const row = await dbGet(`
     SELECT u.*
     FROM sessions s
     JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ?
       AND s.revoked_at IS NULL
       AND s.expires_at > ?
-  `).get(tokenHash(token), nowIso());
+  `, [tokenHash(token), nowIso()]);
   return rowToUser(row);
 }
 
@@ -1279,10 +1192,10 @@ function writeSse(res, event, payload) {
   res.write(`data: ${JSON.stringify({ ...payload, sentAt: nowIso() })}\n\n`);
 }
 
-function handleEvents(req, res, url) {
-  const ticketUser = consumeSseTicket(url.searchParams.get('ticket'));
+async function handleEvents(req, res, url) {
+  const ticketUser = await consumeSseTicket(url.searchParams.get('ticket'));
   const token = getBearerToken(req);
-  const user = ticketUser || getAuthUserFromToken(token);
+  const user = ticketUser || (await getAuthUserFromToken(token));
   if (!user) return send(res, 401, { ok: false, error: 'Faça login para acompanhar em tempo real.' });
   if (user.status === 'blocked') return send(res, 403, { ok: false, error: 'Usuário bloqueado.' });
 
@@ -1309,7 +1222,7 @@ function handleEvents(req, res, url) {
   writeSse(res, 'connected', {
     ok: true,
     clientId,
-    user: publicUser(user),
+    user: await publicUser(user),
     message: 'Tempo real conectado.'
   });
 
@@ -1336,46 +1249,46 @@ function handleEvents(req, res, url) {
   });
 }
 
-function emitRealtime(eventName, payload, predicate = () => true) {
+async function emitRealtime(eventName, payload, predicate = () => true) {
   for (const [clientId, client] of eventClients.entries()) {
     try {
-      if (predicate(client)) writeSse(client.res, eventName, payload);
+      if (await predicate(client)) writeSse(client.res, eventName, payload);
     } catch {
       eventClients.delete(clientId);
     }
   }
 }
 
-function shouldReceiveRideEvent(client, ride) {
+async function shouldReceiveRideEvent(client, ride) {
   if (!ride) return false;
   if (client.role === 'admin') return true;
   if (client.userId === ride.passengerId) return true;
   if (ride.driverId && client.userId === ride.driverId) return true;
   if (client.role === 'driver' && ride.status === 'pending') {
-    const driver = getUserById(client.userId);
+    const driver = await getUserById(client.userId);
     return Boolean(driver && driver.status === 'approved' && driver.online);
   }
   return false;
 }
 
-function emitRideEvent(type, ride, extra = {}) {
-  emitRealtime('ride-update', {
+async function emitRideEvent(type, ride, extra = {}) {
+  await emitRealtime('ride-update', {
     type,
     ride,
     ...extra
   }, client => shouldReceiveRideEvent(client, ride));
 }
 
-function emitDriverEvent(type, driver, extra = {}) {
-  emitRealtime('driver-update', {
+async function emitDriverEvent(type, driver, extra = {}) {
+  await emitRealtime('driver-update', {
     type,
-    driver: publicUser(driver),
+    driver: await publicUser(driver),
     ...extra
   }, client => client.role === 'admin' || client.userId === driver.id);
 }
 
-function emitTariffEvent(rules) {
-  emitRealtime('tariff-update', {
+async function emitTariffEvent(rules) {
+  await emitRealtime('tariff-update', {
     type: 'tariff-updated',
     tariffRules: rules
   });
@@ -1577,8 +1490,8 @@ function isDriverLocationFresh(user) {
   return Date.now() - updatedAt <= getDriverLocationStaleSeconds() * 1000;
 }
 
-function driverAvailable(origin = null) {
-  const rows = db.prepare("SELECT * FROM users WHERE role = 'driver' AND status = 'approved' AND online = 1 ORDER BY updated_at DESC").all();
+async function driverAvailable(origin = null) {
+  const rows = await dbAll("SELECT * FROM users WHERE role = 'driver' AND status = 'approved' AND online = 1 ORDER BY updated_at DESC");
   const users = rows.map(rowToUser).filter(Boolean);
   if (!origin) return users;
   return users
@@ -1590,38 +1503,76 @@ function driverAvailable(origin = null) {
     });
 }
 
-function stats() {
-  const rules = getTariffRules();
-  const totalRevenue = db.prepare("SELECT COALESCE(SUM(fare), 0) AS total FROM rides WHERE status = 'finished'").get().total || 0;
-  const commission = Number(totalRevenue) * ((100 - Number(rules.driverSharePercent || 80)) / 100);
+async function stats() {
+  const [
+    rules,
+    totalRevenueRow,
+    passengers,
+    driversTotal,
+    driversPending,
+    driversApproved,
+    driversOnline,
+    ridesPending,
+    ridesAccepted,
+    ridesFinished,
+    ridesCancelled,
+    contactsLogged,
+    ratingsCount,
+    averageRatingRow,
+    lowRatedDrivers,
+    supportOpen,
+    reportsOpen,
+    driverDocsPending
+  ] = await Promise.all([
+    getTariffRules(),
+    dbGet("SELECT COALESCE(SUM(fare), 0) AS total FROM rides WHERE status = 'finished'"),
+    dbGet("SELECT COUNT(*) AS count FROM users WHERE role = 'passenger'"),
+    dbGet("SELECT COUNT(*) AS count FROM users WHERE role = 'driver'"),
+    dbGet("SELECT COUNT(*) AS count FROM users WHERE role = 'driver' AND status = 'pending'"),
+    dbGet("SELECT COUNT(*) AS count FROM users WHERE role = 'driver' AND status = 'approved'"),
+    dbGet("SELECT COUNT(*) AS count FROM users WHERE role = 'driver' AND status = 'approved' AND online = 1"),
+    dbGet("SELECT COUNT(*) AS count FROM rides WHERE status = 'pending'"),
+    dbGet("SELECT COUNT(*) AS count FROM rides WHERE status = 'accepted'"),
+    dbGet("SELECT COUNT(*) AS count FROM rides WHERE status = 'finished'"),
+    dbGet("SELECT COUNT(*) AS count FROM rides WHERE status = 'cancelled'"),
+    dbGet("SELECT COUNT(*) AS count FROM ride_contacts"),
+    dbGet("SELECT COUNT(*) AS count FROM ride_ratings"),
+    dbGet("SELECT COALESCE(AVG(rating), 0) AS average FROM ride_ratings"),
+    dbGet("SELECT COUNT(*) AS count FROM (SELECT driver_id, AVG(rating) AS avg_rating, COUNT(*) AS qty FROM ride_ratings GROUP BY driver_id HAVING COUNT(*) >= 3 AND AVG(rating) < 3.5) sub"),
+    dbGet("SELECT COUNT(*) AS count FROM support_tickets WHERE status != 'closed'"),
+    dbGet("SELECT COUNT(*) AS count FROM ride_reports WHERE status != 'resolved'"),
+    dbGet("SELECT COUNT(*) AS count FROM users WHERE role = 'driver' AND document_status IN ('not_sent', 'pending_review')")
+  ]);
+  const totalRevenue = Number(totalRevenueRow.total || 0);
+  const commission = totalRevenue * ((100 - Number(rules.driverSharePercent || 80)) / 100);
   return {
-    passengers: db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'passenger'").get().count,
-    driversTotal: db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'driver'").get().count,
-    driversPending: db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'driver' AND status = 'pending'").get().count,
-    driversApproved: db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'driver' AND status = 'approved'").get().count,
-    driversOnline: db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'driver' AND status = 'approved' AND online = 1").get().count,
-    ridesPending: db.prepare("SELECT COUNT(*) AS count FROM rides WHERE status = 'pending'").get().count,
-    ridesAccepted: db.prepare("SELECT COUNT(*) AS count FROM rides WHERE status = 'accepted'").get().count,
-    ridesFinished: db.prepare("SELECT COUNT(*) AS count FROM rides WHERE status = 'finished'").get().count,
-    ridesCancelled: db.prepare("SELECT COUNT(*) AS count FROM rides WHERE status = 'cancelled'").get().count,
-    contactsLogged: db.prepare("SELECT COUNT(*) AS count FROM ride_contacts").get().count,
-    ratingsCount: db.prepare("SELECT COUNT(*) AS count FROM ride_ratings").get().count,
-    averageRating: Number(Number(db.prepare("SELECT COALESCE(AVG(rating), 0) AS average FROM ride_ratings").get().average || 0).toFixed(2)),
-    lowRatedDrivers: db.prepare("SELECT COUNT(*) AS count FROM (SELECT driver_id, AVG(rating) AS avg_rating, COUNT(*) AS qty FROM ride_ratings GROUP BY driver_id HAVING qty >= 3 AND avg_rating < 3.5)").get().count,
-    supportOpen: db.prepare("SELECT COUNT(*) AS count FROM support_tickets WHERE status != 'closed'").get().count,
-    reportsOpen: db.prepare("SELECT COUNT(*) AS count FROM ride_reports WHERE status != 'resolved'").get().count,
-    driverDocsPending: db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'driver' AND document_status IN ('not_sent', 'pending_review')").get().count,
-    totalRevenue: Number(Number(totalRevenue).toFixed(2)),
+    passengers: Number(passengers.count),
+    driversTotal: Number(driversTotal.count),
+    driversPending: Number(driversPending.count),
+    driversApproved: Number(driversApproved.count),
+    driversOnline: Number(driversOnline.count),
+    ridesPending: Number(ridesPending.count),
+    ridesAccepted: Number(ridesAccepted.count),
+    ridesFinished: Number(ridesFinished.count),
+    ridesCancelled: Number(ridesCancelled.count),
+    contactsLogged: Number(contactsLogged.count),
+    ratingsCount: Number(ratingsCount.count),
+    averageRating: Number(Number(averageRatingRow.average || 0).toFixed(2)),
+    lowRatedDrivers: Number(lowRatedDrivers.count),
+    supportOpen: Number(supportOpen.count),
+    reportsOpen: Number(reportsOpen.count),
+    driverDocsPending: Number(driverDocsPending.count),
+    totalRevenue: Number(totalRevenue.toFixed(2)),
     estimatedPlatformCommission: Number(commission.toFixed(2))
   };
 }
 
-function audit(actorUserId, action, entityType, entityId, details) {
+async function audit(actorUserId, action, entityType, entityId, details) {
   try {
-    db.prepare(`
+    await dbRun(`
       INSERT INTO audit_logs (id, actor_user_id, action, entity_type, entity_id, details, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       crypto.randomUUID(),
       actorUserId || null,
       action,
@@ -1629,7 +1580,7 @@ function audit(actorUserId, action, entityType, entityId, details) {
       entityId || null,
       details ? JSON.stringify(details) : null,
       nowIso()
-    );
+    ]);
   } catch {
     // Auditoria não pode derrubar operação principal.
   }
@@ -1686,42 +1637,53 @@ function ensureRideTransition(ride, nextStatus) {
   return { from, to };
 }
 
-function exportData() {
+async function exportData() {
+  const [tariffRules, users, rides, sessions, rideContacts, rideRatings, supportTickets, rideReports, auditLogs] = await Promise.all([
+    getTariffRules(),
+    getAllUsers().then(list => mapAsync(list, publicUser)),
+    getAllRides(),
+    dbAll(`
+      SELECT user_id AS "userId", created_at AS "createdAt", expires_at AS "expiresAt", revoked_at AS "revokedAt"
+      FROM sessions
+      ORDER BY created_at DESC
+    `),
+    dbAll(`
+      SELECT ride_id AS "rideId", actor_user_id AS "actorUserId", target_user_id AS "targetUserId", target_role AS "targetRole", channel, phone, message, created_at AS "createdAt"
+      FROM ride_contacts
+      ORDER BY created_at DESC
+      LIMIT 500
+    `),
+    dbAll(`
+      SELECT ride_id AS "rideId", passenger_id AS "passengerId", driver_id AS "driverId", rating, comment, created_at AS "createdAt", updated_at AS "updatedAt"
+      FROM ride_ratings
+      ORDER BY created_at DESC
+      LIMIT 500
+    `),
+    getSupportTickets(),
+    getRideReports(),
+    dbAll(`
+      SELECT actor_user_id AS "actorUserId", action, entity_type AS "entityType", entity_id AS "entityId", details, created_at AS "createdAt"
+      FROM audit_logs
+      ORDER BY created_at DESC
+      LIMIT 500
+    `)
+  ]);
   return {
     meta: {
       appName: 'PardoGo',
       version: APP_VERSION,
       exportedAt: nowIso(),
-      database: 'SQLite', maps: 'Leaflet/OpenStreetMap + OSRM fallback', realtime: 'SSE/EventSource', cancellation: 'Cancelamento com motivo', contacts: 'WhatsApp/ligação registrados', ratings: 'Avaliações de corridas e qualidade', support: 'Chamados de suporte', reports: 'Denúncias e segurança operacional', legal: 'Termos e privacidade LGPD base' 
+      database: 'PostgreSQL (Supabase)', maps: 'Leaflet/OpenStreetMap + OSRM fallback', realtime: 'SSE/EventSource', cancellation: 'Cancelamento com motivo', contacts: 'WhatsApp/ligação registrados', ratings: 'Avaliações de corridas e qualidade', support: 'Chamados de suporte', reports: 'Denúncias e segurança operacional', legal: 'Termos e privacidade LGPD base'
     },
-    tariffRules: getTariffRules(),
-    users: getAllUsers().map(publicUser),
-    rides: getAllRides(),
-    sessions: db.prepare(`
-      SELECT user_id AS userId, created_at AS createdAt, expires_at AS expiresAt, revoked_at AS revokedAt
-      FROM sessions
-      ORDER BY created_at DESC
-    `).all(),
-    rideContacts: db.prepare(`
-      SELECT ride_id AS rideId, actor_user_id AS actorUserId, target_user_id AS targetUserId, target_role AS targetRole, channel, phone, message, created_at AS createdAt
-      FROM ride_contacts
-      ORDER BY created_at DESC
-      LIMIT 500
-    `).all(),
-    rideRatings: db.prepare(`
-      SELECT ride_id AS rideId, passenger_id AS passengerId, driver_id AS driverId, rating, comment, created_at AS createdAt, updated_at AS updatedAt
-      FROM ride_ratings
-      ORDER BY created_at DESC
-      LIMIT 500
-    `).all(),
-    supportTickets: getSupportTickets(),
-    rideReports: getRideReports(),
-    auditLogs: db.prepare(`
-      SELECT actor_user_id AS actorUserId, action, entity_type AS entityType, entity_id AS entityId, details, created_at AS createdAt
-      FROM audit_logs
-      ORDER BY created_at DESC
-      LIMIT 500
-    `).all()
+    tariffRules,
+    users,
+    rides,
+    sessions,
+    rideContacts,
+    rideRatings,
+    supportTickets,
+    rideReports,
+    auditLogs
   };
 }
 
@@ -1754,7 +1716,7 @@ function canCancelRide(user, ride) {
   return false;
 }
 
-function getRideTargetUser(ride, targetRole) {
+async function getRideTargetUser(ride, targetRole) {
   if (targetRole === 'passenger') return getUserById(ride.passengerId);
   if (targetRole === 'driver' && ride.driverId) return getUserById(ride.driverId);
   return null;
@@ -1767,7 +1729,7 @@ function buildContactMessage(ride, actor, targetRole) {
   return `Olá, aqui é ${actor.name}, ${who} do PardoGo. Sobre a corrida ${rideLabel}.`;
 }
 
-function logRideContact({ ride, actor, target, targetRole, channel, message }) {
+async function logRideContact({ ride, actor, target, targetRole, channel, message }) {
   const contact = {
     id: crypto.randomUUID(),
     rideId: ride.id,
@@ -1779,12 +1741,12 @@ function logRideContact({ ride, actor, target, targetRole, channel, message }) {
     message: message || '',
     createdAt: nowIso()
   };
-  db.prepare(`
+  await dbRun(`
     INSERT INTO ride_contacts (id, ride_id, actor_user_id, target_user_id, target_role, channel, phone, message, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(contact.id, contact.rideId, contact.actorUserId, contact.targetUserId, contact.targetRole, contact.channel, contact.phone, contact.message, contact.createdAt);
-  audit(actor.id, 'contact_ride_participant', 'ride', ride.id, { targetRole, channel, targetUserId: target.id });
-  emitRealtime('contact-log', { type: 'contact-created', rideId: ride.id, targetRole, channel }, client => client.role === 'admin' || client.userId === ride.passengerId || client.userId === ride.driverId);
+  `, [contact.id, contact.rideId, contact.actorUserId, contact.targetUserId, contact.targetRole, contact.channel, contact.phone, contact.message, contact.createdAt]);
+  await audit(actor.id, 'contact_ride_participant', 'ride', ride.id, { targetRole, channel, targetUserId: target.id });
+  await emitRealtime('contact-log', { type: 'contact-created', rideId: ride.id, targetRole, channel }, client => client.role === 'admin' || client.userId === ride.passengerId || client.userId === ride.driverId);
   return contact;
 }
 
@@ -1849,21 +1811,21 @@ function rowToRideReport(row) {
   };
 }
 
-function getSupportTickets(user = null) {
+async function getSupportTickets(user = null) {
   if (user && user.role !== 'admin') {
-    return db.prepare('SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC LIMIT 100').all(user.id).map(rowToSupportTicket);
+    return (await dbAll('SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC LIMIT 100', [user.id])).map(rowToSupportTicket);
   }
-  return db.prepare('SELECT * FROM support_tickets ORDER BY created_at DESC LIMIT 500').all().map(rowToSupportTicket);
+  return (await dbAll('SELECT * FROM support_tickets ORDER BY created_at DESC LIMIT 500')).map(rowToSupportTicket);
 }
 
-function getRideReports(user = null) {
+async function getRideReports(user = null) {
   if (user && user.role !== 'admin') {
-    return db.prepare('SELECT * FROM ride_reports WHERE reporter_user_id = ? ORDER BY created_at DESC LIMIT 100').all(user.id).map(rowToRideReport);
+    return (await dbAll('SELECT * FROM ride_reports WHERE reporter_user_id = ? ORDER BY created_at DESC LIMIT 100', [user.id])).map(rowToRideReport);
   }
-  return db.prepare('SELECT * FROM ride_reports ORDER BY created_at DESC LIMIT 500').all().map(rowToRideReport);
+  return (await dbAll('SELECT * FROM ride_reports ORDER BY created_at DESC LIMIT 500')).map(rowToRideReport);
 }
 
-function createSupportTicket(user, body) {
+async function createSupportTicket(user, body) {
   const now = nowIso();
   const ticket = {
     id: crypto.randomUUID(),
@@ -1877,20 +1839,20 @@ function createSupportTicket(user, body) {
     createdAt: now,
     updatedAt: now
   };
-  db.prepare(`
+  await dbRun(`
     INSERT INTO support_tickets (id, user_id, role, subject, category, message, status, admin_note, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(ticket.id, ticket.userId, ticket.role, ticket.subject, ticket.category, ticket.message, ticket.status, ticket.adminNote, ticket.createdAt, ticket.updatedAt);
-  audit(user.id, 'create_support_ticket', 'support_ticket', ticket.id, { category: ticket.category, subject: ticket.subject });
+  `, [ticket.id, ticket.userId, ticket.role, ticket.subject, ticket.category, ticket.message, ticket.status, ticket.adminNote, ticket.createdAt, ticket.updatedAt]);
+  await audit(user.id, 'create_support_ticket', 'support_ticket', ticket.id, { category: ticket.category, subject: ticket.subject });
   return ticket;
 }
 
-function createRideReport(user, body) {
+async function createRideReport(user, body) {
   const now = nowIso();
   const allowedRoles = ['passenger', 'driver', 'platform'];
   const reportedRole = allowedRoles.includes(body.reportedRole) ? body.reportedRole : 'platform';
   if (body.rideId) {
-    const ride = getRideById(body.rideId);
+    const ride = await getRideById(body.rideId);
     if (!ride || !canAccessRide(user, ride)) throw new Error('Corrida informada não encontrada para esse usuário.');
   }
   const report = {
@@ -1905,11 +1867,11 @@ function createRideReport(user, body) {
     createdAt: now,
     updatedAt: now
   };
-  db.prepare(`
+  await dbRun(`
     INSERT INTO ride_reports (id, ride_id, reporter_user_id, reported_role, category, description, status, admin_note, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(report.id, report.rideId || null, report.reporterUserId, report.reportedRole, report.category, report.description, report.status, report.adminNote, report.createdAt, report.updatedAt);
-  audit(user.id, 'create_ride_report', 'ride_report', report.id, { category: report.category, reportedRole: report.reportedRole, rideId: report.rideId });
+  `, [report.id, report.rideId || null, report.reporterUserId, report.reportedRole, report.category, report.description, report.status, report.adminNote, report.createdAt, report.updatedAt]);
+  await audit(user.id, 'create_ride_report', 'ride_report', report.id, { category: report.category, reportedRole: report.reportedRole, rideId: report.rideId });
   return report;
 }
 
@@ -1920,8 +1882,8 @@ async function handleApi(req, res, url) {
   try {
     if (method === 'GET' && pathname === '/api/health') {
       try {
-        const probe = db.prepare('SELECT 1 AS ok').get();
-        if (!probe || probe.ok !== 1) throw new Error('probe_failed');
+        const probe = await dbGet('SELECT 1 AS ok');
+        if (!probe || Number(probe.ok) !== 1) throw new Error('probe_failed');
         return send(res, 200, {
           ok: true,
           app: 'PardoGo',
@@ -1933,8 +1895,8 @@ async function handleApi(req, res, url) {
           uptimeSeconds: Math.round(process.uptime()),
           baseUrl: APP_BASE_URL,
           realtimeClients: eventClients.size,
-          database: 'sqlite',
-          features: ['api', 'sqlite', 'secure-sessions', 'security-headers', 'rate-limit', 'production-healthcheck', 'deploy-ready', 'geolocation', 'leaflet-map', 'route-calculation', 'realtime-sse', 'ride-cancellation', 'ride-contact', 'ride-rating', 'quality-dashboard', 'support-tickets', 'safety-reports', 'driver-documents', 'legal-lgpd', 'pwa', 'capacitor-android', 'mobile-api-config', 'mobile-cors']
+          database: 'postgresql',
+          features: ['api', 'postgresql', 'secure-sessions', 'security-headers', 'rate-limit', 'production-healthcheck', 'deploy-ready', 'geolocation', 'leaflet-map', 'route-calculation', 'realtime-sse', 'ride-cancellation', 'ride-contact', 'ride-rating', 'quality-dashboard', 'support-tickets', 'safety-reports', 'driver-documents', 'legal-lgpd', 'pwa', 'capacitor-android', 'mobile-api-config', 'mobile-cors']
         });
       } catch {
         return send(res, 503, {
@@ -1949,7 +1911,7 @@ async function handleApi(req, res, url) {
     }
 
     if (method === 'POST' && pathname === '/api/events-ticket') {
-      const user = requireAuth(req, res, ['passenger', 'driver', 'admin']);
+      const user = await requireAuth(req, res, ['passenger', 'driver', 'admin']);
       if (!user) return;
       const ticket = issueSseTicket(user.id);
       return send(res, 200, {
@@ -1960,7 +1922,7 @@ async function handleApi(req, res, url) {
     }
 
     if (method === 'GET' && pathname === '/api/events') {
-      return handleEvents(req, res, url);
+      return await handleEvents(req, res, url);
     }
 
     if (method === 'POST' && pathname === '/api/auth/register') {
@@ -1991,7 +1953,7 @@ async function handleApi(req, res, url) {
       if (!isValidPhone(phone)) {
         return send(res, 400, { ok: false, error: 'Informe um telefone válido com DDD.' });
       }
-      if (getUserByPhone(phone)) {
+      if (await getUserByPhone(phone)) {
         return send(res, 409, { ok: false, error: 'Telefone já cadastrado.' });
       }
       const user = createUserObject({
@@ -2009,10 +1971,10 @@ async function handleApi(req, res, url) {
         privacyAccepted: true
       });
       try {
-        insertUser(user);
+        await insertUser(user);
       } catch (error) {
         // Em requisições concorrentes, o índice UNIQUE de telefone pode disparar aqui.
-        if (isUniqueConstraintError(error) && getUserByPhone(phone)) {
+        if (isUniqueConstraintError(error) && (await getUserByPhone(phone))) {
           return send(res, 409, { ok: false, error: 'Telefone já cadastrado.' });
         }
         throw error;
@@ -2020,12 +1982,12 @@ async function handleApi(req, res, url) {
       return send(res, 201, {
         ok: true,
         message: role === 'driver' ? 'Motorista cadastrado. Aguarde aprovação do administrador.' : 'Passageiro cadastrado com sucesso.',
-        user: publicUser(user)
+        user: await publicUser(user)
       });
     }
 
     if (method === 'POST' && pathname === '/api/auth/login') {
-      cleanupSessions();
+      await cleanupSessions();
       const body = await parseBody(req);
       const missing = validateRequired(['phone', 'password'], body);
       if (missing) return send(res, 400, { ok: false, error: missing });
@@ -2040,7 +2002,7 @@ async function handleApi(req, res, url) {
           error: `Muitas tentativas de login. Tente novamente em ${lockInfo.retryAfterSeconds}s.`
         }, { 'Retry-After': String(lockInfo.retryAfterSeconds) });
       }
-      const user = getUserByPhone(normalizedPhone);
+      const user = await getUserByPhone(normalizedPhone);
       const passwordValid = user
         ? verifyPassword(body.password, user.passwordHash)
         : false;
@@ -2055,12 +2017,12 @@ async function handleApi(req, res, url) {
       if (user.status === 'blocked') {
         return send(res, 403, { ok: false, error: 'Usuário bloqueado.' });
       }
-      const session = createSession(user, req);
+      const session = await createSession(user, req);
       return send(res, 200, {
         ok: true,
         token: session.token,
         expiresAt: session.expiresAt,
-        user: publicUser(user),
+        user: await publicUser(user),
         message: user.role === 'driver' && user.status !== 'approved'
           ? 'Login realizado. Seu cadastro de motorista ainda está em análise.'
           : 'Login realizado com sucesso.'
@@ -2068,20 +2030,20 @@ async function handleApi(req, res, url) {
     }
 
     if (method === 'POST' && pathname === '/api/auth/google') {
-      cleanupSessions();
+      await cleanupSessions();
       const body = await parseBody(req);
       const credential = String(body.credential || '').trim();
       if (!credential) return send(res, 400, { ok: false, error: 'Token Google não informado.' });
 
       const google = await verifyGoogleCredential(credential);
-      const oauth = getOAuthAccount('google', google.sub);
+      const oauth = await getOAuthAccount('google', google.sub);
 
-      let user = oauth ? getUserById(oauth.user_id) : null;
+      let user = oauth ? await getUserById(oauth.user_id) : null;
       if (!user) {
         const role = body.role === 'driver' ? 'driver' : 'passenger';
         const created = createUserObject({
           name: google.name,
-          phone: generateOAuthPlaceholderPhone(),
+          phone: await generateOAuthPlaceholderPhone(),
           password: crypto.randomBytes(24).toString('hex'),
           role,
           status: role === 'driver' ? 'pending' : 'active',
@@ -2089,8 +2051,8 @@ async function handleApi(req, res, url) {
           termsAccepted: true,
           privacyAccepted: true
         });
-        insertUser(created);
-        createOAuthAccount({ provider: 'google', providerUserId: google.sub, userId: created.id, email: google.email });
+        await insertUser(created);
+        await createOAuthAccount({ provider: 'google', providerUserId: google.sub, userId: created.id, email: google.email });
         user = created;
       }
 
@@ -2098,12 +2060,12 @@ async function handleApi(req, res, url) {
         return send(res, 403, { ok: false, error: 'Usuário bloqueado.' });
       }
 
-      const session = createSession(user, req);
+      const session = await createSession(user, req);
       return send(res, 200, {
         ok: true,
         token: session.token,
         expiresAt: session.expiresAt,
-        user: publicUser(user),
+        user: await publicUser(user),
         message: user.role === 'driver' && user.status !== 'approved'
           ? 'Acesso com Google realizado. Seu cadastro de motorista ainda está em análise.'
           : 'Acesso com Google realizado com sucesso.'
@@ -2111,18 +2073,18 @@ async function handleApi(req, res, url) {
     }
 
     if (method === 'POST' && pathname === '/api/auth/logout') {
-      revokeSession(getBearerToken(req));
+      await revokeSession(getBearerToken(req));
       return send(res, 200, { ok: true });
     }
 
     if (method === 'GET' && pathname === '/api/me') {
-      const user = requireAuth(req, res);
+      const user = await requireAuth(req, res);
       if (!user) return;
-      return send(res, 200, { ok: true, user: publicUser(user) });
+      return send(res, 200, { ok: true, user: await publicUser(user) });
     }
 
     if (method === 'GET' && pathname === '/api/config') {
-      return send(res, 200, { ok: true, tariffRules: getTariffRules(), fixedFare: FIXED_FARE_BRL, stats: stats(), paymentMethods: PAYMENT_METHODS });
+      return send(res, 200, { ok: true, tariffRules: await getTariffRules(), fixedFare: FIXED_FARE_BRL, stats: await stats(), paymentMethods: PAYMENT_METHODS });
     }
 
     if (method === 'GET' && pathname === '/api/legal') {
@@ -2180,7 +2142,7 @@ async function handleApi(req, res, url) {
         distanceKm = route.distanceKm;
         minutes = route.minutes;
       }
-      const rules = getTariffRules();
+      const rules = await getTariffRules();
       const fare = calculateFare(distanceKm, minutes, rules);
       return send(res, 200, {
         ok: true,
@@ -2197,7 +2159,7 @@ async function handleApi(req, res, url) {
     }
 
     if (method === 'POST' && pathname === '/api/rides') {
-      const user = requireAuth(req, res, ['passenger', 'admin']);
+      const user = await requireAuth(req, res, ['passenger', 'admin']);
       if (!user) return;
       const body = await parseBody(req);
       const missing = validateRequired(['origin', 'destination'], body);
@@ -2216,21 +2178,20 @@ async function handleApi(req, res, url) {
         distanceKm = Math.max(Number(route.distanceKm || distanceKm), 0.5);
         minutes = Math.max(Number(route.minutes || minutes), 3);
       }
-      const rules = getTariffRules();
+      const rules = await getTariffRules();
       const fare = calculateFare(distanceKm, minutes, rules);
-      const availableDrivers = originCoords ? driverAvailable(originCoords) : driverAvailable();
+      const availableDrivers = await (originCoords ? driverAvailable(originCoords) : driverAvailable());
       const rideIdempotencyKey = normalizeIdempotencyKey(body.idempotencyKey || null);
       if (rideIdempotencyKey) {
-        const existing = db.prepare('SELECT * FROM rides WHERE passenger_id = ? AND idempotency_key = ? LIMIT 1')
-          .get(user.id, rideIdempotencyKey);
+        const existing = await dbGet('SELECT * FROM rides WHERE passenger_id = ? AND idempotency_key = ? LIMIT 1', [user.id, rideIdempotencyKey]);
         if (existing) {
-          const existingRide = rowToRide(existing);
+          const existingRide = await rowToRide(existing);
           return send(res, 200, {
             ok: true,
             idempotentReplay: true,
             message: 'Requisição repetida detectada. Retornando corrida já criada.',
             ride: existingRide,
-            availableDrivers: availableDrivers.map(publicUser)
+            availableDrivers: await mapAsync(availableDrivers, publicUser)
           });
         }
       }
@@ -2264,77 +2225,76 @@ async function handleApi(req, res, url) {
         cancelReason: null
       };
       try {
-        insertRide(ride);
+        await insertRide(ride);
       } catch (error) {
         if (isUniqueConstraintError(error) && rideIdempotencyKey) {
-          const existing = db.prepare('SELECT * FROM rides WHERE passenger_id = ? AND idempotency_key = ? LIMIT 1')
-            .get(user.id, rideIdempotencyKey);
+          const existing = await dbGet('SELECT * FROM rides WHERE passenger_id = ? AND idempotency_key = ? LIMIT 1', [user.id, rideIdempotencyKey]);
           if (existing) {
-            const existingRide = rowToRide(existing);
+            const existingRide = await rowToRide(existing);
             return send(res, 200, {
               ok: true,
               idempotentReplay: true,
               message: 'Requisição concorrente detectada. Retornando corrida já criada.',
               ride: existingRide,
-              availableDrivers: availableDrivers.map(publicUser)
+              availableDrivers: await mapAsync(availableDrivers, publicUser)
             });
           }
         }
         throw error;
       }
-      emitRideEvent('created', ride, { availableDrivers: availableDrivers.map(publicUser) });
+      await emitRideEvent('created', ride, { availableDrivers: await mapAsync(availableDrivers, publicUser) });
       return send(res, 201, {
         ok: true,
         message: availableDrivers.length ? 'Corrida enviada para os motoristas online.' : 'Corrida criada, mas não há motorista online agora.',
         ride,
-        availableDrivers: availableDrivers.map(publicUser)
+        availableDrivers: await mapAsync(availableDrivers, publicUser)
       });
     }
 
     if (method === 'GET' && pathname === '/api/rides/my') {
-      const user = requireAuth(req, res, ['passenger', 'driver', 'admin']);
+      const user = await requireAuth(req, res, ['passenger', 'driver', 'admin']);
       if (!user) return;
       let rows = [];
       if (user.role === 'passenger') {
-        rows = db.prepare('SELECT * FROM rides WHERE passenger_id = ? ORDER BY created_at DESC').all(user.id);
+        rows = await dbAll('SELECT * FROM rides WHERE passenger_id = ? ORDER BY created_at DESC', [user.id]);
       }
       if (user.role === 'driver') {
-        rows = db.prepare('SELECT * FROM rides WHERE driver_id = ? OR status = ? ORDER BY created_at DESC').all(user.id, 'pending');
+        rows = await dbAll('SELECT * FROM rides WHERE driver_id = ? OR status = ? ORDER BY created_at DESC', [user.id, 'pending']);
       }
       if (user.role === 'admin') {
-        rows = db.prepare('SELECT * FROM rides ORDER BY created_at DESC').all();
+        rows = await dbAll('SELECT * FROM rides ORDER BY created_at DESC');
       }
-      return send(res, 200, { ok: true, rides: rows.map(rowToRide) });
+      return send(res, 200, { ok: true, rides: await mapAsync(rows, rowToRide) });
     }
 
     if (method === 'GET' && pathname === '/api/driver/rides') {
-      const user = requireAuth(req, res, ['driver']);
+      const user = await requireAuth(req, res, ['driver']);
       if (!user) return;
       if (!requireApprovedDriver(user, res)) return;
-      const rows = db.prepare('SELECT * FROM rides WHERE status = ? OR driver_id = ? ORDER BY created_at DESC').all('pending', user.id);
-      return send(res, 200, { ok: true, rides: rows.map(rowToRide) });
+      const rows = await dbAll('SELECT * FROM rides WHERE status = ? OR driver_id = ? ORDER BY created_at DESC', ['pending', user.id]);
+      return send(res, 200, { ok: true, rides: await mapAsync(rows, rowToRide) });
     }
 
     if (method === 'PATCH' && pathname === '/api/driver/status') {
-      const user = requireAuth(req, res, ['driver']);
+      const user = await requireAuth(req, res, ['driver']);
       if (!user) return;
       if (!requireApprovedDriver(user, res)) return;
       const body = await parseBody(req);
       const online = Boolean(body.online) ? 1 : 0;
       const updatedAt = nowIso();
-      db.prepare('UPDATE users SET online = ?, updated_at = ? WHERE id = ?').run(online, updatedAt, user.id);
-      audit(user.id, 'update_driver_status', 'user', user.id, { online: Boolean(online) });
-      const updatedDriver = getUserById(user.id);
-      emitDriverEvent('status', updatedDriver, { online: Boolean(online) });
+      await dbRun('UPDATE users SET online = ?, updated_at = ? WHERE id = ?', [online, updatedAt, user.id]);
+      await audit(user.id, 'update_driver_status', 'user', user.id, { online: Boolean(online) });
+      const updatedDriver = await getUserById(user.id);
+      await emitDriverEvent('status', updatedDriver, { online: Boolean(online) });
       if (online) {
-        const pendingRides = db.prepare('SELECT * FROM rides WHERE status = ? ORDER BY created_at DESC').all('pending').map(rowToRide);
-        emitRealtime('driver-pending-rides', { type: 'driver-online', rides: pendingRides }, client => client.userId === user.id);
+        const pendingRides = await mapAsync(await dbAll('SELECT * FROM rides WHERE status = ? ORDER BY created_at DESC', ['pending']), rowToRide);
+        await emitRealtime('driver-pending-rides', { type: 'driver-online', rides: pendingRides }, client => client.userId === user.id);
       }
-      return send(res, 200, { ok: true, user: publicUser(updatedDriver) });
+      return send(res, 200, { ok: true, user: await publicUser(updatedDriver) });
     }
 
     if (method === 'PATCH' && pathname === '/api/driver/location') {
-      const user = requireAuth(req, res, ['driver']);
+      const user = await requireAuth(req, res, ['driver']);
       if (!user) return;
       if (!requireApprovedDriver(user, res)) return;
       const body = await parseBody(req);
@@ -2347,23 +2307,23 @@ async function handleApi(req, res, url) {
         return send(res, 400, { ok: false, error: 'Localizacao fora de Santa Rita do Pardo - MS.' });
       }
       const updatedAt = nowIso();
-      db.prepare(`
+      await dbRun(`
         UPDATE users
         SET last_lat = ?, last_lng = ?, last_accuracy = ?, last_location_updated_at = ?, updated_at = ?
         WHERE id = ?
-      `).run(lat, lng, Number.isFinite(Number(body.accuracy)) ? Number(body.accuracy) : null, updatedAt, updatedAt, user.id);
-      audit(user.id, 'update_driver_location', 'user', user.id, { lat, lng });
-      const updatedDriver = getUserById(user.id);
-      emitDriverEvent('location', updatedDriver, { lat, lng });
-      return send(res, 200, { ok: true, user: publicUser(updatedDriver) });
+      `, [lat, lng, Number.isFinite(Number(body.accuracy)) ? Number(body.accuracy) : null, updatedAt, updatedAt, user.id]);
+      await audit(user.id, 'update_driver_location', 'user', user.id, { lat, lng });
+      const updatedDriver = await getUserById(user.id);
+      await emitDriverEvent('location', updatedDriver, { lat, lng });
+      return send(res, 200, { ok: true, user: await publicUser(updatedDriver) });
     }
 
     const acceptMatch = pathname.match(/^\/api\/rides\/([^/]+)\/accept$/);
     if (method === 'PATCH' && acceptMatch) {
-      const user = requireAuth(req, res, ['driver']);
+      const user = await requireAuth(req, res, ['driver']);
       if (!user) return;
       if (!requireApprovedDriver(user, res)) return;
-      const ride = getRideById(acceptMatch[1]);
+      const ride = await getRideById(acceptMatch[1]);
       if (!ride) return send(res, 404, { ok: false, error: 'Corrida não encontrada.' });
       const acceptedAt = nowIso();
       try {
@@ -2371,22 +2331,22 @@ async function handleApi(req, res, url) {
       } catch (error) {
         return send(res, error.statusCode || 409, { ok: false, error: error.message });
       }
-      const result = db.prepare('UPDATE rides SET status = ?, driver_id = ?, driver_name = ?, driver_phone = ?, accepted_at = ? WHERE id = ? AND status = ?')
-        .run('accepted', user.id, user.name, user.phone, acceptedAt, ride.id, 'pending');
+      const result = await dbRun('UPDATE rides SET status = ?, driver_id = ?, driver_name = ?, driver_phone = ?, accepted_at = ? WHERE id = ? AND status = ?',
+        ['accepted', user.id, user.name, user.phone, acceptedAt, ride.id, 'pending']);
       if (!result.changes) {
         return send(res, 409, { ok: false, error: 'Essa corrida já foi aceita ou finalizada.' });
       }
-      audit(user.id, 'accept_ride', 'ride', ride.id, { driverName: user.name });
-      const updatedRide = getRideById(ride.id);
-      emitRideEvent('accepted', updatedRide, { driver: publicUser(user) });
+      await audit(user.id, 'accept_ride', 'ride', ride.id, { driverName: user.name });
+      const updatedRide = await getRideById(ride.id);
+      await emitRideEvent('accepted', updatedRide, { driver: await publicUser(user) });
       return send(res, 200, { ok: true, ride: updatedRide });
     }
 
     const finishMatch = pathname.match(/^\/api\/rides\/([^/]+)\/finish$/);
     if (method === 'PATCH' && finishMatch) {
-      const user = requireAuth(req, res, ['driver', 'admin']);
+      const user = await requireAuth(req, res, ['driver', 'admin']);
       if (!user) return;
-      const ride = getRideById(finishMatch[1]);
+      const ride = await getRideById(finishMatch[1]);
       if (!ride) return send(res, 404, { ok: false, error: 'Corrida não encontrada.' });
       if (user.role === 'driver' && ride.driverId !== user.id) {
         return send(res, 403, { ok: false, error: 'Essa corrida pertence a outro motorista.' });
@@ -2397,19 +2357,19 @@ async function handleApi(req, res, url) {
         return send(res, error.statusCode || 409, { ok: false, error: error.message });
       }
       const finishedAt = nowIso();
-      db.prepare('UPDATE rides SET status = ?, finished_at = ? WHERE id = ?').run('finished', finishedAt, ride.id);
-      audit(user.id, 'finish_ride', 'ride', ride.id, { status: 'finished' });
-      const updatedRide = getRideById(ride.id);
-      emitRideEvent('finished', updatedRide);
+      await dbRun('UPDATE rides SET status = ?, finished_at = ? WHERE id = ?', ['finished', finishedAt, ride.id]);
+      await audit(user.id, 'finish_ride', 'ride', ride.id, { status: 'finished' });
+      const updatedRide = await getRideById(ride.id);
+      await emitRideEvent('finished', updatedRide);
       return send(res, 200, { ok: true, ride: updatedRide });
     }
 
 
     const cancelMatch = pathname.match(/^\/api\/rides\/([^/]+)\/cancel$/);
     if (method === 'PATCH' && cancelMatch) {
-      const user = requireAuth(req, res, ['passenger', 'driver', 'admin']);
+      const user = await requireAuth(req, res, ['passenger', 'driver', 'admin']);
       if (!user) return;
-      const ride = getRideById(cancelMatch[1]);
+      const ride = await getRideById(cancelMatch[1]);
       if (!ride) return send(res, 404, { ok: false, error: 'Corrida não encontrada.' });
       if (!canCancelRide(user, ride)) return send(res, 403, { ok: false, error: 'Você não pode cancelar essa corrida.' });
       const body = await parseBody(req);
@@ -2420,25 +2380,25 @@ async function handleApi(req, res, url) {
         return send(res, error.statusCode || 409, { ok: false, error: error.message });
       }
       const cancelledAt = nowIso();
-      const result = db.prepare(`
+      const result = await dbRun(`
         UPDATE rides
         SET status = ?, cancelled_at = ?, cancelled_by = ?, cancel_reason = ?
         WHERE id = ? AND status IN ('pending', 'accepted')
-      `).run('cancelled', cancelledAt, user.id, reason, ride.id);
+      `, ['cancelled', cancelledAt, user.id, reason, ride.id]);
       if (!result.changes) {
         return send(res, 409, { ok: false, error: 'Corrida já cancelada ou finalizada.' });
       }
-      audit(user.id, 'cancel_ride', 'ride', ride.id, { reason, previousStatus: ride.status });
-      const updatedRide = getRideById(ride.id);
-      emitRideEvent('cancelled', updatedRide, { cancelledBy: publicUser(user), reason });
+      await audit(user.id, 'cancel_ride', 'ride', ride.id, { reason, previousStatus: ride.status });
+      const updatedRide = await getRideById(ride.id);
+      await emitRideEvent('cancelled', updatedRide, { cancelledBy: await publicUser(user), reason });
       return send(res, 200, { ok: true, ride: updatedRide });
     }
 
     const contactMatch = pathname.match(/^\/api\/rides\/([^/]+)\/contact$/);
     if (method === 'POST' && contactMatch) {
-      const user = requireAuth(req, res, ['passenger', 'driver', 'admin']);
+      const user = await requireAuth(req, res, ['passenger', 'driver', 'admin']);
       if (!user) return;
-      const ride = getRideById(contactMatch[1]);
+      const ride = await getRideById(contactMatch[1]);
       if (!ride) return send(res, 404, { ok: false, error: 'Corrida não encontrada.' });
       if (!canAccessRide(user, ride)) return send(res, 403, { ok: false, error: 'Você não participa dessa corrida.' });
       const body = await parseBody(req);
@@ -2446,17 +2406,17 @@ async function handleApi(req, res, url) {
       const targetRole = body.target === 'driver' ? 'driver' : 'passenger';
       if (user.role === 'passenger' && targetRole !== 'driver') return send(res, 400, { ok: false, error: 'Passageiro só pode contatar o motorista dessa corrida.' });
       if (user.role === 'driver' && targetRole !== 'passenger') return send(res, 400, { ok: false, error: 'Motorista só pode contatar o passageiro dessa corrida.' });
-      const target = getRideTargetUser(ride, targetRole);
+      const target = await getRideTargetUser(ride, targetRole);
       if (!target) return send(res, 404, { ok: false, error: targetRole === 'driver' ? 'Ainda não há motorista para essa corrida.' : 'Passageiro não encontrado.' });
       if (target.status === 'blocked') return send(res, 403, { ok: false, error: 'Usuário de destino está bloqueado.' });
       const message = String(body.message || buildContactMessage(ride, user, targetRole)).slice(0, 400);
-      const contact = logRideContact({ ride, actor: user, target, targetRole, channel, message });
+      const contact = await logRideContact({ ride, actor: user, target, targetRole, channel, message });
       const digits = numericPhone(target.phone);
       const whatsappPhone = phoneForWhatsapp(target.phone);
       return send(res, 200, {
         ok: true,
         contact,
-        target: publicUser(target),
+        target: await publicUser(target),
         phone: target.phone,
         telUrl: digits ? `tel:${digits}` : '',
         whatsappUrl: whatsappPhone ? `https://wa.me/${whatsappPhone}?text=${encodeURIComponent(message)}` : '',
@@ -2467,9 +2427,9 @@ async function handleApi(req, res, url) {
 
     const ratingMatch = pathname.match(/^\/api\/rides\/([^/]+)\/rating$/);
     if (method === 'POST' && ratingMatch) {
-      const user = requireAuth(req, res, ['passenger']);
+      const user = await requireAuth(req, res, ['passenger']);
       if (!user) return;
-      const ride = getRideById(ratingMatch[1]);
+      const ride = await getRideById(ratingMatch[1]);
       if (!ride) return send(res, 404, { ok: false, error: 'Corrida não encontrada.' });
       if (ride.passengerId !== user.id) return send(res, 403, { ok: false, error: 'Você só pode avaliar suas próprias corridas.' });
       if (ride.status !== 'finished') return send(res, 409, { ok: false, error: 'A corrida precisa estar finalizada para receber avaliação.' });
@@ -2480,70 +2440,70 @@ async function handleApi(req, res, url) {
         return send(res, 400, { ok: false, error: 'A nota precisa ser um número inteiro de 1 a 5.' });
       }
       const comment = String(body.comment || '').trim().slice(0, 400);
-      const savedRating = upsertRideRating({ ride, passenger: user, rating, comment });
-      return send(res, 200, { ok: true, rating: savedRating, ride: getRideById(ride.id) });
+      const savedRating = await upsertRideRating({ ride, passenger: user, rating, comment });
+      return send(res, 200, { ok: true, rating: savedRating, ride: await getRideById(ride.id) });
     }
 
     if (method === 'POST' && pathname === '/api/support/tickets') {
-      const user = requireAuth(req, res, ['passenger', 'driver', 'admin']);
+      const user = await requireAuth(req, res, ['passenger', 'driver', 'admin']);
       if (!user) return;
       const body = await parseBody(req);
       const missing = validateRequired(['subject', 'category', 'message'], body);
       if (missing) return send(res, 400, { ok: false, error: missing });
-      const ticket = createSupportTicket(user, body);
-      emitRealtime('support-update', { type: 'support-created', ticket }, client => client.role === 'admin' || client.userId === user.id);
+      const ticket = await createSupportTicket(user, body);
+      await emitRealtime('support-update', { type: 'support-created', ticket }, client => client.role === 'admin' || client.userId === user.id);
       return send(res, 201, { ok: true, ticket });
     }
 
     if (method === 'GET' && pathname === '/api/support/tickets') {
-      const user = requireAuth(req, res, ['passenger', 'driver', 'admin']);
+      const user = await requireAuth(req, res, ['passenger', 'driver', 'admin']);
       if (!user) return;
-      return send(res, 200, { ok: true, tickets: getSupportTickets(user) });
+      return send(res, 200, { ok: true, tickets: await getSupportTickets(user) });
     }
 
     if (method === 'POST' && pathname === '/api/reports') {
-      const user = requireAuth(req, res, ['passenger', 'driver', 'admin']);
+      const user = await requireAuth(req, res, ['passenger', 'driver', 'admin']);
       if (!user) return;
       const body = await parseBody(req);
       const missing = validateRequired(['reportedRole', 'category', 'description'], body);
       if (missing) return send(res, 400, { ok: false, error: missing });
-      const report = createRideReport(user, body);
-      emitRealtime('security-update', { type: 'report-created', report }, client => client.role === 'admin' || client.userId === user.id);
+      const report = await createRideReport(user, body);
+      await emitRealtime('security-update', { type: 'report-created', report }, client => client.role === 'admin' || client.userId === user.id);
       return send(res, 201, { ok: true, report });
     }
 
     if (method === 'GET' && pathname === '/api/reports') {
-      const user = requireAuth(req, res, ['passenger', 'driver', 'admin']);
+      const user = await requireAuth(req, res, ['passenger', 'driver', 'admin']);
       if (!user) return;
-      return send(res, 200, { ok: true, reports: getRideReports(user) });
+      return send(res, 200, { ok: true, reports: await getRideReports(user) });
     }
 
     if (method === 'GET' && pathname === '/api/admin/system') {
-      const user = requireAuth(req, res, ['admin']);
+      const user = await requireAuth(req, res, ['admin']);
       if (!user) return;
       return send(res, 200, { ok: true, system: systemChecklist() });
     }
 
     if (method === 'GET' && pathname === '/api/admin/dashboard') {
-      const user = requireAuth(req, res, ['admin']);
+      const user = await requireAuth(req, res, ['admin']);
       if (!user) return;
       return send(res, 200, {
         ok: true,
-        stats: stats(),
-        tariffRules: getTariffRules(),
-        users: getAllUsers().map(publicUser),
-        rides: getAllRides(),
-        supportTickets: getSupportTickets(),
-        rideReports: getRideReports(),
+        stats: await stats(),
+        tariffRules: await getTariffRules(),
+        users: await mapAsync(await getAllUsers(), publicUser),
+        rides: await getAllRides(),
+        supportTickets: await getSupportTickets(),
+        rideReports: await getRideReports(),
         legal: getLegalContent(),
-        database: { type: 'SQLite', path: 'data/pardogo.sqlite' }
+        database: { type: 'PostgreSQL', provider: 'Supabase' }
       });
     }
 
     if (method === 'GET' && pathname === '/api/admin/users') {
-      const user = requireAuth(req, res, ['admin']);
+      const user = await requireAuth(req, res, ['admin']);
       if (!user) return;
-      const users = getAllUsers().map(publicUser);
+      const users = await mapAsync(await getAllUsers(), publicUser);
       const drivers = users.filter(item => item.role === 'driver');
       const passengers = users.filter(item => item.role === 'passenger');
       return send(res, 200, {
@@ -2561,10 +2521,10 @@ async function handleApi(req, res, url) {
     }
 
     if (method === 'PATCH' && pathname === '/api/admin/tariff') {
-      const user = requireAuth(req, res, ['admin']);
+      const user = await requireAuth(req, res, ['admin']);
       if (!user) return;
       const body = await parseBody(req);
-      const next = { ...getTariffRules() };
+      const next = { ...(await getTariffRules()) };
       ['base', 'perKm', 'perMin', 'min', 'driverSharePercent'].forEach(key => {
         if (body[key] !== undefined && body[key] !== '') next[key] = Number(body[key]);
       });
@@ -2574,79 +2534,79 @@ async function handleApi(req, res, url) {
       if ([next.base, next.perKm, next.perMin, next.min].some(value => !Number.isFinite(Number(value)) || Number(value) < 0)) {
         return send(res, 400, { ok: false, error: 'Tarifas precisam ser números positivos.' });
       }
-      updateTariffRules(next);
-      audit(user.id, 'admin_update_tariff', 'tariff_rules', '1', next);
-      const updatedRules = getTariffRules();
-      emitTariffEvent(updatedRules);
+      await updateTariffRules(next);
+      await audit(user.id, 'admin_update_tariff', 'tariff_rules', '1', next);
+      const updatedRules = await getTariffRules();
+      await emitTariffEvent(updatedRules);
       return send(res, 200, { ok: true, tariffRules: updatedRules });
     }
 
     if (method === 'PATCH' && pathname === '/api/admin/drivers/approve-pending') {
-      const user = requireAuth(req, res, ['admin']);
+      const user = await requireAuth(req, res, ['admin']);
       if (!user) return;
-      const pendingDriverIds = db.prepare('SELECT id FROM users WHERE role = ? AND status = ?').all('driver', 'pending').map(item => item.id);
-      const result = db.prepare('UPDATE users SET status = ?, updated_at = ? WHERE role = ? AND status = ?')
-        .run('approved', nowIso(), 'driver', 'pending');
+      const pendingDriverIds = (await dbAll('SELECT id FROM users WHERE role = ? AND status = ?', ['driver', 'pending'])).map(item => item.id);
+      const result = await dbRun('UPDATE users SET status = ?, updated_at = ? WHERE role = ? AND status = ?',
+        ['approved', nowIso(), 'driver', 'pending']);
       for (const driverId of pendingDriverIds) {
-        const updatedDriver = getUserById(driverId);
-        if (updatedDriver) emitDriverEvent('admin-status', updatedDriver, { status: 'approved', bulk: true });
+        const updatedDriver = await getUserById(driverId);
+        if (updatedDriver) await emitDriverEvent('admin-status', updatedDriver, { status: 'approved', bulk: true });
       }
-      audit(user.id, 'admin_approve_pending_drivers', 'user', null, { updated: result.changes });
+      await audit(user.id, 'admin_approve_pending_drivers', 'user', null, { updated: result.changes });
       return send(res, 200, { ok: true, updated: result.changes });
     }
 
     const driverStatusMatch = pathname.match(/^\/api\/admin\/drivers\/([^/]+)\/status$/);
     if (method === 'PATCH' && driverStatusMatch) {
-      const user = requireAuth(req, res, ['admin']);
+      const user = await requireAuth(req, res, ['admin']);
       if (!user) return;
       const body = await parseBody(req);
       const allowed = ['pending', 'approved', 'blocked'];
       if (!allowed.includes(body.status)) return send(res, 400, { ok: false, error: 'Status inválido.' });
-      const driver = getUserById(driverStatusMatch[1]);
+      const driver = await getUserById(driverStatusMatch[1]);
       if (!driver || driver.role !== 'driver') return send(res, 404, { ok: false, error: 'Motorista não encontrado.' });
-      db.prepare('UPDATE users SET status = ?, online = CASE WHEN ? = ? THEN 0 ELSE online END, updated_at = ? WHERE id = ?')
-        .run(body.status, body.status, 'blocked', nowIso(), driver.id);
-      audit(user.id, 'admin_update_driver_status', 'user', driver.id, { status: body.status });
-      const updatedDriver = getUserById(driver.id);
-      emitDriverEvent('admin-status', updatedDriver, { status: body.status });
-      return send(res, 200, { ok: true, user: publicUser(updatedDriver) });
+      await dbRun('UPDATE users SET status = ?, online = CASE WHEN ? = ? THEN 0 ELSE online END, updated_at = ? WHERE id = ?',
+        [body.status, body.status, 'blocked', nowIso(), driver.id]);
+      await audit(user.id, 'admin_update_driver_status', 'user', driver.id, { status: body.status });
+      const updatedDriver = await getUserById(driver.id);
+      await emitDriverEvent('admin-status', updatedDriver, { status: body.status });
+      return send(res, 200, { ok: true, user: await publicUser(updatedDriver) });
     }
 
     const driverDocsMatch = pathname.match(/^\/api\/admin\/drivers\/([^/]+)\/documents$/);
     if (method === 'PATCH' && driverDocsMatch) {
-      const user = requireAuth(req, res, ['admin']);
+      const user = await requireAuth(req, res, ['admin']);
       if (!user) return;
       const body = await parseBody(req);
       const allowed = ['not_sent', 'pending_review', 'verified', 'rejected'];
       if (!allowed.includes(body.documentStatus)) return send(res, 400, { ok: false, error: 'Status documental inválido.' });
-      const driver = getUserById(driverDocsMatch[1]);
+      const driver = await getUserById(driverDocsMatch[1]);
       if (!driver || driver.role !== 'driver') return send(res, 404, { ok: false, error: 'Motorista não encontrado.' });
-      db.prepare('UPDATE users SET document_status = ?, documents_note = ?, updated_at = ? WHERE id = ?')
-        .run(body.documentStatus, String(body.documentsNote || '').slice(0, 300), nowIso(), driver.id);
-      audit(user.id, 'admin_update_driver_documents', 'user', driver.id, { documentStatus: body.documentStatus, documentsNote: body.documentsNote || '' });
-      const updatedDriver = getUserById(driver.id);
-      emitDriverEvent('document-status', updatedDriver, { documentStatus: body.documentStatus });
-      return send(res, 200, { ok: true, user: publicUser(updatedDriver) });
+      await dbRun('UPDATE users SET document_status = ?, documents_note = ?, updated_at = ? WHERE id = ?',
+        [body.documentStatus, String(body.documentsNote || '').slice(0, 300), nowIso(), driver.id]);
+      await audit(user.id, 'admin_update_driver_documents', 'user', driver.id, { documentStatus: body.documentStatus, documentsNote: body.documentsNote || '' });
+      const updatedDriver = await getUserById(driver.id);
+      await emitDriverEvent('document-status', updatedDriver, { documentStatus: body.documentStatus });
+      return send(res, 200, { ok: true, user: await publicUser(updatedDriver) });
     }
 
     if (method === 'GET' && pathname === '/api/admin/export') {
-      const user = requireAuth(req, res, ['admin']);
+      const user = await requireAuth(req, res, ['admin']);
       if (!user) return;
-      audit(user.id, 'admin_export_data', 'export', null, { format: 'json' });
-      return send(res, 200, exportData(), {
+      await audit(user.id, 'admin_export_data', 'export', null, { format: 'json' });
+      return send(res, 200, await exportData(), {
         'Content-Disposition': 'attachment; filename="pardogo-export-etapa11.json"'
       });
     }
 
     if (method === 'GET' && pathname === '/api/admin/audit') {
-      const user = requireAuth(req, res, ['admin']);
+      const user = await requireAuth(req, res, ['admin']);
       if (!user) return;
-      const logs = db.prepare(`
-        SELECT actor_user_id AS actorUserId, action, entity_type AS entityType, entity_id AS entityId, details, created_at AS createdAt
+      const logs = await dbAll(`
+        SELECT actor_user_id AS "actorUserId", action, entity_type AS "entityType", entity_id AS "entityId", details, created_at AS "createdAt"
         FROM audit_logs
         ORDER BY created_at DESC
         LIMIT 100
-      `).all();
+      `);
       return send(res, 200, { ok: true, logs });
     }
 
@@ -2678,10 +2638,10 @@ function serveStatic(req, res, url) {
   sendText(res, 200, fs.readFileSync(absolute), types[ext] || 'application/octet-stream', { 'Cache-Control': cache });
 }
 
-function closeDatabaseSafely() {
-  if (!db || isDbClosed) return;
+async function closeDatabaseSafely() {
+  if (isDbClosed) return;
   try {
-    db.close();
+    await closePool();
   } catch {
     // Sem acao: fechamento best effort.
   } finally {
@@ -2715,15 +2675,15 @@ function installGracefulShutdown(server) {
 
     closeAllSseClients(signal);
 
-    const hardStop = setTimeout(() => {
-      closeDatabaseSafely();
+    const hardStop = setTimeout(async () => {
+      await closeDatabaseSafely();
       process.exit(1);
     }, 15000);
     hardStop.unref();
 
-    server.close(() => {
+    server.close(async () => {
       clearTimeout(hardStop);
-      closeDatabaseSafely();
+      await closeDatabaseSafely();
       process.exit(0);
     });
   };
@@ -2732,9 +2692,9 @@ function installGracefulShutdown(server) {
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-function createServer() {
+async function createServer() {
   validateProductionConfig();
-  openDatabase();
+  await openDatabase();
   return http.createServer(async (req, res) => {
     res.req = req;
     const url = new URL(req.url, `http://${req.headers.host}`);
@@ -2762,15 +2722,20 @@ function createServer() {
 }
 
 if (require.main === module) {
-  const server = createServer();
-  installGracefulShutdown(server);
-  server.listen(PORT, () => {
-    console.log(`PardoGo Etapa 14 rodando em http://localhost:${PORT}`);
-    console.log(`Ambiente: ${NODE_ENV} | Base URL: ${APP_BASE_URL}`);
-    console.log(`Banco SQLite: ${DB_PATH}`);
-    const warnings = validateProductionConfig();
-    warnings.forEach(warning => console.warn(`Aviso de produção: ${warning}`));
+  (async () => {
+    const server = await createServer();
+    installGracefulShutdown(server);
+    server.listen(PORT, () => {
+      console.log(`PardoGo Etapa 14 rodando em http://localhost:${PORT}`);
+      console.log(`Ambiente: ${NODE_ENV} | Base URL: ${APP_BASE_URL}`);
+      console.log('Banco: PostgreSQL (Supabase)');
+      const warnings = validateProductionConfig();
+      warnings.forEach(warning => console.warn(`Aviso de produção: ${warning}`));
+    });
+  })().catch(error => {
+    console.error(`Falha ao iniciar o servidor: ${error.message}`);
+    process.exit(1);
   });
 }
 
-module.exports = { createServer, calculateFare, defaultTariffRules, DB_PATH, openDatabase, systemChecklist, APP_VERSION, closeDatabaseSafely };
+module.exports = { createServer, calculateFare, defaultTariffRules, openDatabase, systemChecklist, APP_VERSION, closeDatabaseSafely };

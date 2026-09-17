@@ -18,7 +18,7 @@ Reporte falhas de segurança em canal privado. Não abra issue pública com segr
 - `ADMIN_INITIAL_PHONE` obrigatória e válida.
 - HTTPS obrigatório (`FORCE_HTTPS=1`, `TRUST_PROXY=1`).
 - `CORS_ORIGIN` sem wildcard em produção.
-- `DB_PATH` nunca em diretório temporário.
+- `DATABASE_URL` nunca commitada; sempre via variável de ambiente/secret.
 
 ## CORS
 

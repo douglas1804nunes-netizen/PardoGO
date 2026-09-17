@@ -77,13 +77,13 @@ function isWeakAdminPassword(value) {
   return !/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{10,}$/.test(raw);
 }
 
-function isTemporaryDbPath(dbPath) {
-  const normalized = String(dbPath || '').replace(/\\/g, '/').toLowerCase();
-  return normalized.includes('/tmp/')
-    || normalized.includes('/temp/')
-    || normalized.includes('/var/tmp/')
-    || normalized.endsWith('/tmp')
-    || normalized.endsWith('/temp');
+function isValidPostgresUrl(value) {
+  try {
+    const parsed = new URL(String(value || '').trim());
+    return /^postgres(ql)?:$/i.test(parsed.protocol) && Boolean(parsed.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function normalizePhoneDigits(phone) {
@@ -124,7 +124,7 @@ function validateEnvConfig(overrides = {}) {
 
   const appBaseUrl = String(env.APP_BASE_URL || '').trim();
   const canonicalBaseUrl = String(env.CANONICAL_BASE_URL || '').trim();
-  const dbPath = String(env.DB_PATH || '').trim();
+  const databaseUrl = String(env.DATABASE_URL || '').trim();
   const adminPhoneRaw = String(env.ADMIN_INITIAL_PHONE || '').trim();
   const adminPhoneDigits = normalizePhoneDigits(adminPhoneRaw);
   const adminPassword = String(env.ADMIN_INITIAL_PASSWORD || '');
@@ -147,10 +147,10 @@ function validateEnvConfig(overrides = {}) {
     errors.push('CANONICAL_BASE_URL deve usar HTTPS em produção.');
   }
 
-  if (!dbPath) {
-    if (isProduction) errors.push('DB_PATH é obrigatório em produção.');
-  } else if (isProduction && isTemporaryDbPath(dbPath)) {
-    errors.push('DB_PATH não pode apontar para diretório temporário em produção.');
+  if (!databaseUrl) {
+    if (isProduction) errors.push('DATABASE_URL é obrigatório em produção.');
+  } else if (!isValidPostgresUrl(databaseUrl)) {
+    errors.push('DATABASE_URL deve ser uma connection string Postgres válida (postgresql://...).');
   }
 
   if (!adminPhoneRaw) {
@@ -204,7 +204,7 @@ function getEnvConfig(overrides = {}) {
   const isProduction = NODE_ENV === 'production';
   const APP_BASE_URL = String(env.APP_BASE_URL || 'https://pardogo-8yn0.onrender.com').trim();
   const CANONICAL_BASE_URL = String(env.CANONICAL_BASE_URL || APP_BASE_URL).trim();
-  const DB_PATH = String(env.DB_PATH || path.join(projectRoot, 'data', 'pardogo.sqlite')).trim();
+  const DATABASE_URL = String(env.DATABASE_URL || '').trim();
   const ADMIN_INITIAL_PHONE = String(
     env.ADMIN_INITIAL_PHONE ||
     (isProduction ? '' : '67990000000')
@@ -237,7 +237,7 @@ function getEnvConfig(overrides = {}) {
     PORT,
     APP_BASE_URL,
     CANONICAL_BASE_URL,
-    DB_PATH,
+    DATABASE_URL,
     ADMIN_INITIAL_PHONE,
     ADMIN_INITIAL_PASSWORD,
     SESSION_DAYS,

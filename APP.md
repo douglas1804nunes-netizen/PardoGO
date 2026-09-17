@@ -6,7 +6,7 @@ O app Android usa Capacitor 7 com frontend da pasta `public`.
 
 Fluxo:
 
-App Android -> API HTTPS -> backend Node.js -> SQLite persistente no Render.
+App Android -> API HTTPS -> backend Node.js -> Postgres (Supabase).
 
 ## Configuração usada em produção
 

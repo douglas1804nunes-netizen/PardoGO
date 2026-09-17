@@ -13,7 +13,7 @@
 
 ## Banco e persistência
 
-- [ ] `DB_PATH=/var/data/pardogo.sqlite`
+- [ ] `DATABASE_URL` configurada (Postgres/Supabase)
 - [ ] disco persistente Render ativo
 - [ ] backup executado e restaurável
 - [ ] migrations retrocompatíveis aplicadas sem perda de dados
@@ -29,7 +29,7 @@
 - [ ] Node na faixa `>=22.13.0 <25`
 - [ ] `npm ci --omit=dev` no deploy
 - [ ] `node --check server.js` OK
-- [ ] `/api/health` com probe SQLite real
+- [ ] `/api/health` com probe Postgres real
 
 ## Pagamentos / rides
 
@@ -43,7 +43,7 @@
 - [ ] ticket SSE expira e é de uso único
 - [ ] reconexão não duplica listeners
 - [ ] logout revoga sessão
-- [ ] graceful shutdown encerra SSE e SQLite
+- [ ] graceful shutdown encerra SSE e o pool Postgres
 
 ## Mobile / Android
 

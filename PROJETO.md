@@ -24,7 +24,7 @@ Preparar o MVP para rodar como aplicativo Android usando Capacitor, mantendo o b
 ```text
 public/                 Front-end PWA/app
 server.js               Backend API Node.js
-SQLite                  Banco no servidor
+Postgres (Supabase)     Banco de dados gerenciado
 Capacitor               Camada nativa Android
 public/mobile-config.js Configuração da API para o app
 ```

@@ -6,7 +6,7 @@ Este documento é um roteiro de execução. Marque apenas após validar no ambie
 
 - [ ] Confirmar API de produção: `https://pardogo-8yn0.onrender.com`
 - [ ] Confirmar `CORS_ORIGIN` sem wildcard
-- [ ] Confirmar `DB_PATH=/var/data/pardogo.sqlite`
+- [ ] Confirmar `DATABASE_URL` apontando para o Postgres do Supabase
 - [ ] Confirmar credenciais admin definidas por variáveis de ambiente
 
 ## 2. Build e diagnóstico
