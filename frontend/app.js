@@ -564,128 +564,22 @@ function setFormStatus(id, message, type = '') {
   el.className = `form-status ${type || 'muted'}`;
 }
 
-function permissionTone(state) {
-  if (state === 'granted') return 'ok';
-  if (state === 'denied') return 'bad';
-  return 'warn';
-}
-
-function permissionLabel(state) {
-  const map = {
-    granted: 'concedida',
-    denied: 'negada',
-    prompt: 'não solicitada',
-    indisponivel: 'indisponível'
-  };
-  return map[state] || 'não solicitada';
-}
-
-function hasContactPicker() {
-  return Boolean(navigator.contacts && typeof navigator.contacts.select === 'function');
-}
-
-async function queryPermissionState(name) {
-  if (!navigator.permissions?.query) return 'indisponivel';
-  try {
-    const result = await navigator.permissions.query({ name });
-    return result.state || 'prompt';
-  } catch {
-    return 'indisponivel';
-  }
-}
-
-async function contactPermissionState() {
-  if (!hasContactPicker()) return 'indisponivel';
-  try {
-    const state = await queryPermissionState('contacts');
-    if (state !== 'indisponivel') return state;
-  } catch {}
-  return 'disponivel-no-dispositivo';
-}
-
 async function updateMobilePermissionsStatus() {
-  const note = $('#firstAccessNote');
-  const locationChip = $('#locationPermissionChip');
-  const notificationChip = $('#notificationPermissionChip');
-  if (!note && !locationChip && !notificationChip) return;
-
-  const locationState = hasGeo() ? await queryPermissionState('geolocation') : 'indisponivel';
-  const rawNotificationState = 'Notification' in window ? (Notification.permission || 'default') : 'indisponivel';
-  const notificationState = rawNotificationState === 'default' ? 'prompt' : rawNotificationState;
-
-  if (locationChip) {
-    locationChip.textContent = `Localização: ${permissionLabel(locationState)}`;
-    locationChip.className = `permission-chip ${permissionTone(locationState)}`;
-  }
-  if (notificationChip) {
-    notificationChip.textContent = `Notificações: ${permissionLabel(notificationState)}`;
-    notificationChip.className = `permission-chip ${permissionTone(notificationState)}`;
-  }
-  if (note) {
-    note.textContent = 'No primeiro acesso, o app pode pedir permissão de localização, notificações e câmera/microfone quando uma função exigir. Use os botões abaixo para liberar agora.';
-  }
-}
-
-async function requestEssentialPermissions() {
-  const messages = [];
-  if (navigator.mediaDevices?.getUserMedia) {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      stream.getTracks().forEach(track => track.stop());
-      messages.push('câmera/microfone ok');
-    } catch {
-      messages.push('câmera/microfone negado');
-    }
-  } else {
-    messages.push('câmera/microfone indisponível');
-  }
-
-  if (hasContactPicker()) {
-    try {
-      await navigator.contacts.select(['name'], { multiple: false });
-      messages.push('contatos ok');
-    } catch {
-      messages.push('contatos não concedido');
-    }
-  } else {
-    messages.push('contatos indisponível');
-  }
-
-  await updateMobilePermissionsStatus();
-  toast(`Permissões essenciais: ${messages.join(' • ')}.`, 'ok');
+  if (!window.PardoGoPermissions) return;
+  const status = await window.PardoGoPermissions.checkPermissions();
+  window.PardoGoPermissions.applyStatusToUI(status);
 }
 
 async function requestLocationPermission() {
-  if (!hasGeo()) {
-    toast('Geolocalização não está disponível neste dispositivo.', 'error');
+  if (!window.PardoGoPermissions) {
+    toast('Não foi possível verificar as permissões agora.', 'error');
     return;
   }
-  try {
-    await getBrowserPosition();
+  const { status, message } = await window.PardoGoPermissions.runPrimaryAction();
+  if (status === 'granted') {
     toast('Permissão de localização concedida.', 'ok');
-  } catch (error) {
-    toast(geolocationErrorMessage(error), 'error');
-  } finally {
-    await updateMobilePermissionsStatus();
-  }
-}
-
-async function requestNotificationPermission() {
-  if (!('Notification' in window)) {
-    toast('Notificações não são suportadas neste dispositivo.', 'error');
-    return;
-  }
-  try {
-    const result = await Notification.requestPermission();
-    if (result === 'granted') {
-      toast('Permissão de notificações concedida.', 'ok');
-    } else {
-      toast('Permissão de notificações não foi concedida.', 'error');
-    }
-  } catch {
-    toast('Não foi possível solicitar notificações neste momento.', 'error');
-  } finally {
-    await updateMobilePermissionsStatus();
+  } else if (message) {
+    toast(message, status === 'blocked' || status === 'unavailable' ? 'error' : 'ok');
   }
 }
 
@@ -926,8 +820,8 @@ async function loadConfig() {
   const data = await api('/api/config');
   state.tariffRules = data.tariffRules;
   state.fixedFare = Number(data.fixedFare || 20);
-  $('#tariffMin').textContent = money(state.fixedFare);
-  $('#tariffRulesText').textContent = 'Preço fixo, sem cálculo por km/min';
+  if ($('#tariffMin')) $('#tariffMin').textContent = money(state.fixedFare);
+  if ($('#tariffRulesText')) $('#tariffRulesText').textContent = 'Preço fixo, sem cálculo por km/min';
   if ($('#tariffFixedFareNote')) $('#tariffFixedFareNote').textContent = `valor fixo de ${money(state.fixedFare)}`;
   fillTariffForm(data.tariffRules);
 }
@@ -2057,8 +1951,6 @@ function wireEvents() {
   $('#logoutInlineBtn')?.addEventListener('click', () => doLogout());
 
   $('#requestLocationBtn')?.addEventListener('click', requestLocationPermission);
-  $('#requestNotificationBtn')?.addEventListener('click', requestNotificationPermission);
-  $('#requestEssentialBtn')?.addEventListener('click', requestEssentialPermissions);
 
   $('#useLocationBtn').addEventListener('click', capturePassengerLocation);
   $('#mapLocateBtn')?.addEventListener('click', capturePassengerLocation);
@@ -2421,6 +2313,7 @@ async function boot() {
   const intent = routeIntent();
   if (!state.user && intent.view === 'register') showRegisterPanel();
   if (!state.user && intent.view === 'login') showLoginPanel();
+  if (!state.user && IS_NATIVE_APP) window.PardoGoPermissions?.maybeShowOnboarding?.().catch(() => {});
   if (state.user) activateTab(targetAreaForCurrentUser());
   if (state.token) connectRealtime().catch(() => {});
   renderRouteMap();

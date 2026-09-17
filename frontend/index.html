@@ -16,7 +16,6 @@
   <header class="hero">
     <nav class="topbar">
       <div class="brand">
-        <span class="brand-mark">PG</span>
         <div>
           <strong>PardoGo</strong>
           <small>Mobilidade local</small>
@@ -28,29 +27,9 @@
         <button id="logoutBtn" class="ghost hidden">Sair</button>
       </div>
     </nav>
-    <section class="hero-content compact-hero">
+    <section class="hero-content compact-hero centered-hero">
       <div class="compact-hero-title brand-lockup">
         <h1>PardoGo</h1>
-        <p class="brand-subtitle">Solicite corridas em segundos com uma experiência direta, elegante e preparada para escalar.</p>
-      </div>
-      <div class="hero-visual" aria-hidden="true">
-        <div class="hero-visual-card">
-          <strong>Viagem urbana com precisão</strong>
-          <small>Design limpo para passageiro e motorista com foco na corrida, rota e status em tempo real.</small>
-          <div class="hero-visual-photo-wrap">
-            <img class="hero-visual-photo" src="https://images.pexels.com/photos/170811/pexels-photo-170811.jpeg?auto=compress&cs=tinysrgb&w=1200" alt="Carro em avenida urbana durante o pôr do sol" loading="lazy" decoding="async">
-          </div>
-          <div class="hero-visual-meta">
-            <div>
-              <strong id="tariffMin">R$ 20,00</strong>
-              <small>Valor fixo da corrida</small>
-            </div>
-            <div>
-              <strong id="tariffRulesText">Carregando regras...</strong>
-              <small>Sem cálculo por distância</small>
-            </div>
-          </div>
-        </div>
       </div>
     </section>
   </header>
@@ -77,21 +56,6 @@
           </div>
           <small id="loginStatus" class="form-status muted" role="status" aria-live="polite">Informe seu telefone e senha para acessar.</small>
         </form>
-      </article>
-
-      <article class="auth-card" id="firstAccessPermissions">
-        <p class="section-kicker">Antes de começar</p>
-        <h2>Permissões do app</h2>
-        <p class="muted" id="firstAccessNote">Verificando permissões do dispositivo...</p>
-        <div class="location-row">
-          <span id="locationPermissionChip" class="permission-chip warn">Localização: verificando...</span>
-          <span id="notificationPermissionChip" class="permission-chip warn">Notificações: verificando...</span>
-        </div>
-        <div class="location-row spaced">
-          <button type="button" id="requestLocationBtn" class="ghost dark">Permitir localização</button>
-          <button type="button" id="requestNotificationBtn" class="ghost dark">Permitir notificações</button>
-          <button type="button" id="requestEssentialBtn" class="ghost dark">Câmera/mic e contatos</button>
-        </div>
       </article>
     </section>
 
@@ -441,8 +405,8 @@
           </form>
           <div class="app-permissions">
             <h3>Permissões do aplicativo</h3>
-            <p class="muted">Verifique e solicite permissões para garantir localização e recursos no Android.</p>
-            <p class="muted">As permissões agora aparecem diretamente na primeira tela de login.</p>
+            <p class="muted">O PardoGo solicita apenas a permissão de localização, necessária para o mapa e as corridas.</p>
+            <p class="muted">No app Android, essa permissão é explicada e solicitada na primeira abertura; no navegador, ela aparece na tela de login.</p>
           </div>
           <ul>
             <li>Front-end dentro da pasta <code>public</code>.</li>
@@ -492,9 +456,31 @@
   </main>
 
   <div id="toast" class="toast hidden"></div>
+
+  <div id="permissionOnboardingModal" class="permission-modal-backdrop hidden">
+    <article class="permission-modal">
+      <p class="section-kicker">Antes de começar</p>
+      <h2>Permissões do PardoGo</h2>
+      <p class="muted">Para que o PardoGo funcione corretamente, precisamos de uma permissão do seu dispositivo.</p>
+      <div class="permission-modal-item">
+        <span class="permission-modal-icon" aria-hidden="true">📍</span>
+        <div>
+          <strong>Localização</strong>
+          <p class="muted" data-permission-note="location">Necessária para identificar sua posição no mapa e nas corridas.</p>
+        </div>
+      </div>
+      <span data-permission-chip="location" class="permission-chip warn">Localização: verificando...</span>
+      <div class="location-row spaced permission-modal-actions">
+        <button type="button" id="permissionOnboardingDismissBtn" class="ghost dark">Agora não</button>
+        <button type="button" id="permissionOnboardingPrimaryBtn" data-permission-action="location" class="secondary">Continuar</button>
+      </div>
+    </article>
+  </div>
+
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="mobile-config.js"></script>
+  <script src="services/permissions.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
