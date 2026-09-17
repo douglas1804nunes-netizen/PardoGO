@@ -820,7 +820,7 @@ function initGoogleAuth() {
   };
 
   if (!clientId) {
-    setUnavailable('Defina googleClientId em public/mobile-config.js para habilitar o Google.');
+    setUnavailable('Defina googleClientId em frontend/mobile-config.js para habilitar o Google.');
     return;
   }
 

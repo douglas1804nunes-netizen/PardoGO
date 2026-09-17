@@ -48,7 +48,7 @@ http://localhost:5173
 ## Testes e diagnósticos
 
 ```bash
-node --check server.js
+node --check backend/server.js
 npm test
 npm run doctor
 npm run mobile:check
@@ -71,7 +71,7 @@ cd android
 gradlew.bat assembleDebug
 ```
 
-Configuracao de produção mobile (`public/mobile-config.js`):
+Configuracao de produção mobile (`frontend/mobile-config.js`):
 
 - `apiBaseUrl: 'https://pardogo-8yn0.onrender.com'`
 - `appStage: 'production'`

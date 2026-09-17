@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const projectRoot = path.resolve(__dirname, '..', '..');
+const projectRoot = path.resolve(__dirname, '..', '..', '..');
 const envFilePath = path.join(projectRoot, '.env');
 
 function loadEnvFile(filePath = envFilePath) {

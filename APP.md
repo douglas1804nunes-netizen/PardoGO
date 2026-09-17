@@ -10,7 +10,7 @@ App Android -> API HTTPS -> backend Node.js -> Postgres (Supabase).
 
 ## Configuração usada em produção
 
-Em `public/mobile-config.js`:
+Em `frontend/mobile-config.js`:
 
 - `apiBaseUrl: 'https://pardogo-8yn0.onrender.com'`
 - `appStage: 'production'`

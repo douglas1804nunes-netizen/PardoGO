@@ -42,7 +42,7 @@ Defina no Dashboard Render (sem commitar valores):
 ## Passo a passo de validação pós-deploy
 
 ```bash
-node --check server.js
+node --check backend/server.js
 npm test
 npm run doctor
 npm run mobile:check
@@ -59,7 +59,7 @@ Validações manuais mínimas:
 
 ## Android em produção
 
-`public/mobile-config.js` deve manter:
+`frontend/mobile-config.js` deve manter:
 
 - `apiBaseUrl: 'https://pardogo-8yn0.onrender.com'`
 - `appStage: 'production'`

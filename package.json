@@ -2,9 +2,9 @@
   "name": "pardogo-etapa14",
   "version": "1.4.0",
   "description": "PardoGo Etapa 14 - preparação do aplicativo Android com Capacitor, configuração de API online, CORS mobile, build e guia Android Studio.",
-  "main": "server.js",
+  "main": "backend/server.js",
   "scripts": {
-    "start": "node --no-warnings server.js",
+    "start": "node --no-warnings backend/server.js",
     "test": "node --no-warnings scripts/test.js",
     "doctor": "node --no-warnings scripts/doctor.js",
     "mobile:check": "node --no-warnings scripts/mobile-check.js",

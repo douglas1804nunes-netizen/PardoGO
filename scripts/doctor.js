@@ -3,11 +3,11 @@ const path = require('path');
 
 const root = path.join(__dirname, '..');
 const required = [
-  'server.js',
-  'public/index.html',
-  'public/app.js',
-  'public/styles.css',
-  'public/manifest.json',
+  'backend/server.js',
+  'frontend/index.html',
+  'frontend/app.js',
+  'frontend/styles.css',
+  'frontend/manifest.json',
   'package.json',
   '.env.example',
   'DEPLOY.md'

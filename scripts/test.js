@@ -137,7 +137,7 @@ async function run() {
   }
   await resetTestDatabase();
 
-  const server = spawn(process.execPath, ['--no-warnings', 'server.js'], {
+  const server = spawn(process.execPath, ['--no-warnings', 'backend/server.js'], {
     cwd: ROOT,
     env: {
       ...process.env,
@@ -544,8 +544,8 @@ async function run() {
     });
     if (wrongLogin.response.status !== 401) throw new Error('Login inválido deveria retornar 401.');
 
-    const appJs = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
-    const mobileConfigJs = fs.readFileSync(path.join(ROOT, 'public', 'mobile-config.js'), 'utf8');
+    const appJs = fs.readFileSync(path.join(ROOT, 'frontend', 'app.js'), 'utf8');
+    const mobileConfigJs = fs.readFileSync(path.join(ROOT, 'frontend', 'mobile-config.js'), 'utf8');
 
     if (!mobileConfigJs.includes("production: 'https://pardogo-8yn0.onrender.com'")) {
       throw new Error('Perfil production do mobile-config.js não está apontando para a API oficial.');

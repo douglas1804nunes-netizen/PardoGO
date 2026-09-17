@@ -9,7 +9,7 @@ Preparar o MVP para rodar como aplicativo Android usando Capacitor, mantendo o b
 - Configuração do Capacitor revisada.
 - `package.json` com scripts mobile.
 - Dependências de Capacitor adicionadas.
-- `public/mobile-config.js` criado para URL da API online.
+- `frontend/mobile-config.js` criado para URL da API online.
 - Front-end agora aceita API base configurável.
 - SSE/EventSource agora usa URL absoluta quando a API online estiver configurada.
 - Exportação admin também usa API online quando configurada.
@@ -22,11 +22,11 @@ Preparar o MVP para rodar como aplicativo Android usando Capacitor, mantendo o b
 ## Arquitetura da Etapa 14
 
 ```text
-public/                 Front-end PWA/app
-server.js               Backend API Node.js
-Postgres (Supabase)     Banco de dados gerenciado
-Capacitor               Camada nativa Android
-public/mobile-config.js Configuração da API para o app
+frontend/                 Front-end PWA/app
+backend/server.js         Backend API Node.js
+Postgres (Supabase)       Banco de dados gerenciado
+Capacitor                 Camada nativa Android
+frontend/mobile-config.js Configuração da API para o app
 ```
 
 ## Atenção

@@ -49,7 +49,7 @@
 
 - [ ] `appId` permanece `br.com.pardogo.app`
 - [ ] `androidScheme=https` e `cleartext=false`
-- [ ] `public/mobile-config.js` com API produção HTTPS
+- [ ] `frontend/mobile-config.js` com API produção HTTPS
 - [ ] `enableApiSetupScreen=false` para release
 - [ ] `npx cap sync android` executado
 - [ ] `gradlew.bat assembleDebug` OK

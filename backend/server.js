@@ -20,7 +20,7 @@ const APP_VERSION = '1.4.0';
 const NODE_ENV = envConfig.NODE_ENV;
 const PORT = Number(envConfig.PORT || 5173);
 const DATABASE_URL = envConfig.DATABASE_URL;
-const PUBLIC_DIR = path.join(__dirname, 'public');
+const PUBLIC_DIR = path.join(__dirname, '..', 'frontend');
 const APP_BASE_URL = envConfig.APP_BASE_URL;
 const CANONICAL_BASE_URL = envConfig.CANONICAL_BASE_URL || envConfig.APP_BASE_URL;
 const SESSION_DAYS = Number(envConfig.SESSION_DAYS || 7);
@@ -1089,7 +1089,7 @@ function systemChecklist() {
       'Testar cadastro, corrida, tempo real e mapa no domínio final.',
       'Revisar termos, privacidade e regras municipais antes da operação real.',
       'Configurar CORS_ORIGIN para permitir o app Android/Capacitor acessar a API.',
-      'Definir a URL do backend online em public/mobile-config.js antes do build Android.'
+      'Definir a URL do backend online em frontend/mobile-config.js antes do build Android.'
     ]
   };
 }

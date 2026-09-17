@@ -1,5 +1,5 @@
 const assert = require('assert');
-const { validateEnvConfig } = require('../src/config/env');
+const { validateEnvConfig } = require('../backend/src/config/env');
 
 (async function run() {
   process.env.NODE_ENV = 'production';

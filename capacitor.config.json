@@ -1,7 +1,7 @@
 {
   "appId": "br.com.pardogo.app",
   "appName": "PardoGo",
-  "webDir": "public",
+  "webDir": "frontend",
   "server": {
     "androidScheme": "https",
     "cleartext": false

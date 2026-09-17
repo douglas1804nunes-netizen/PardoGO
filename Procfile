@@ -1,1 +1,1 @@
-web: node --no-warnings server.js
+web: node --no-warnings backend/server.js

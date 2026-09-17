@@ -4,12 +4,12 @@ const path = require('path');
 const root = path.join(__dirname, '..');
 const required = [
   'capacitor.config.json',
-  'public/index.html',
-  'public/app.js',
-  'public/styles.css',
-  'public/mobile-config.js',
-  'public/manifest.json',
-  'public/icon.svg'
+  'frontend/index.html',
+  'frontend/app.js',
+  'frontend/styles.css',
+  'frontend/mobile-config.js',
+  'frontend/manifest.json',
+  'frontend/icon.svg'
 ];
 
 let ok = true;
@@ -27,7 +27,7 @@ if (cap.appId !== 'br.com.pardogo.app') {
   console.log('✓ appId Android validado');
 }
 
-const mobileConfig = fs.readFileSync(path.join(root, 'public/mobile-config.js'), 'utf8');
+const mobileConfig = fs.readFileSync(path.join(root, 'frontend/mobile-config.js'), 'utf8');
 if (!mobileConfig.includes('PARDOGO_MOBILE_CONFIG')) {
   console.error('✗ mobile-config.js sem window.PARDOGO_MOBILE_CONFIG');
   ok = false;

@@ -17,7 +17,7 @@ const assert = require('assert');
   process.env.TRUST_PROXY = '1';
   process.env.REQUIRE_SECURE_ENV = '1';
 
-  const { createServer, closeDatabaseSafely } = require('../server');
+  const { createServer, closeDatabaseSafely } = require('../backend/server');
   const server = await createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
