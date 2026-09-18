@@ -5,7 +5,11 @@ const API_BASE_STORAGE_KEY = 'pardogo_api_base';
 const API_HEALTH_TIMEOUT_MS = 10000;
 
 function appStage() {
-  return String(window.PARDOGO_MOBILE_CONFIG?.appStage || 'development').trim().toLowerCase();
+  const configured = String(window.PARDOGO_MOBILE_CONFIG?.appStage || 'development').trim().toLowerCase();
+  const isNativeApp = Boolean(window.Capacitor && typeof window.Capacitor.getPlatform === 'function' && window.Capacitor.getPlatform() !== 'web');
+  // No navegador local (ex.: Docker em localhost), ignora o stage fixo do mobile-config para não tentar falar com a API oficial e esbarrar em CORS.
+  if (!isNativeApp && /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname)) return 'development';
+  return configured;
 }
 
 function isProductionStage() {

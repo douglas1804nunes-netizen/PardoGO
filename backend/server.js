@@ -76,6 +76,7 @@ const MAP_DEFAULT_CENTER = { lat: -21.302, lng: -52.833, label: 'Santa Rita do P
 const CITY_GEOFENCE_RADIUS_KM = Number(envConfig.CITY_GEOFENCE_RADIUS_KM || 55);
 const CITY_AVERAGE_SPEED_KMH = Number(envConfig.CITY_AVERAGE_SPEED_KMH || 28);
 const MAP_TIMEOUT_MS = Number(envConfig.MAP_TIMEOUT_MS || 5500);
+const MAP_BOUNDING_BOX = computeBoundingBox(MAP_DEFAULT_CENTER, CITY_GEOFENCE_RADIUS_KM);
 const eventClients = new Map();
 const sseTickets = new Map();
 const SSE_PING_MS = Number(envConfig.SSE_PING_MS || 25000);
@@ -1329,6 +1330,22 @@ function isWithinAllowedCity(lat, lng) {
   return distance <= CITY_GEOFENCE_RADIUS_KM;
 }
 
+// Converte raio (km) em um retangulo lat/lng ao redor do centro da cidade para restringir a busca no Nominatim.
+function computeBoundingBox(center, radiusKm) {
+  const latDelta = radiusKm / 111;
+  const lngDelta = radiusKm / (111 * Math.cos(center.lat * Math.PI / 180));
+  return {
+    minLat: center.lat - latDelta,
+    maxLat: center.lat + latDelta,
+    minLng: center.lng - lngDelta,
+    maxLng: center.lng + lngDelta
+  };
+}
+
+function viewboxParam(box) {
+  return `${box.minLng},${box.maxLat},${box.maxLng},${box.minLat}`;
+}
+
 function assertCoordsWithinAllowedCity(origin, destination) {
   if (!origin || !destination) return;
   if (!isWithinAllowedCity(origin.lat, origin.lng) || !isWithinAllowedCity(destination.lat, destination.lng)) {
@@ -1338,22 +1355,6 @@ function assertCoordsWithinAllowedCity(origin, destination) {
   }
 }
 
-function isSantaRitaAddress(item) {
-  const address = item && typeof item === 'object' ? (item.address || {}) : {};
-  const cityParts = [
-    address.city,
-    address.town,
-    address.village,
-    address.municipality,
-    address.county,
-    address.state_district
-  ].filter(Boolean).map(value => String(value).toLowerCase());
-
-  const display = String(item?.display_name || '').toLowerCase();
-  const cityMatch = cityParts.some(part => part.includes('santa rita do pardo') || part.includes('santa rita do rio pardo'));
-  const displayMatch = display.includes('santa rita do pardo') || display.includes('santa rita do rio pardo');
-  return cityMatch || displayMatch;
-}
 
 function estimateMinutesByDistance(distanceKm) {
   const safeDistance = Math.max(Number(distanceKm || 0), 0.1);
@@ -1379,25 +1380,15 @@ async function fetchJsonWithTimeout(url, timeoutMs = MAP_TIMEOUT_MS) {
   }
 }
 
-const GEOCODE_VIEWBOX_DEGREES = 0.16;
-
-function geocodeViewBox() {
-  const { lat, lng } = MAP_DEFAULT_CENTER;
-  const left = lng - GEOCODE_VIEWBOX_DEGREES;
-  const right = lng + GEOCODE_VIEWBOX_DEGREES;
-  const top = lat + GEOCODE_VIEWBOX_DEGREES;
-  const bottom = lat - GEOCODE_VIEWBOX_DEGREES;
-  return `${left},${top},${right},${bottom}`;
-}
-
 async function geocodeAddress(query) {
   const term = String(query || '').trim();
   if (!term) return [];
   const expanded = /santa rita/i.test(term) ? term : `${term}, Santa Rita do Pardo, Mato Grosso do Sul, Brasil`;
-  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&addressdetails=1&dedupe=1&countrycodes=br&viewbox=${encodeURIComponent(geocodeViewBox())}&bounded=1&q=${encodeURIComponent(expanded)}`;
+  const viewbox = viewboxParam(MAP_BOUNDING_BOX);
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&addressdetails=1&dedupe=1&countrycodes=br&viewbox=${encodeURIComponent(viewbox)}&bounded=1&q=${encodeURIComponent(expanded)}`;
   const results = await fetchJsonWithTimeout(url).catch(() => []);
   return results
-    .filter(item => isSantaRitaAddress(item) && isWithinAllowedCity(item.lat, item.lon))
+    .filter(item => isWithinAllowedCity(item.lat, item.lon))
     .map(item => ({
       label: item.display_name,
       lat: roundCoord(item.lat),
