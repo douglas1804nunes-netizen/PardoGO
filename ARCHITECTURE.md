@@ -44,6 +44,6 @@ Android Capacitor / PWA -> API HTTPS -> backend Node.js -> Postgres (Supabase).
 
 ## Render
 
-- Fonte principal de deploy: `render.yaml` + `package.json`.
-- Build determinístico: `npm ci --omit=dev`.
+- Fonte principal de deploy: `Dockerfile` (serviço Render configurado como Docker).
+- Build determinístico: `npm ci --omit=dev` dentro da imagem.
 - Health endpoint real: `/api/health` com probe Postgres.

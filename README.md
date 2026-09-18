@@ -79,9 +79,9 @@ Configuracao de produção mobile (`frontend/mobile-config.js`):
 
 ## Deploy Render
 
-Deploy principal usa `render.yaml` com runtime Node:
+Deploy principal usa o `Dockerfile` do repositório (serviço Render configurado como Docker):
 
-- build deterministico: `npm ci --omit=dev`
+- build deterministico: `npm ci --omit=dev` (dentro do Dockerfile)
 - health check: `/api/health`
 - banco: `DATABASE_URL` apontando para o Postgres do Supabase
 

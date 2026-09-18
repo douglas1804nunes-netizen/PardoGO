@@ -2,11 +2,11 @@
 
 ## Estratégia oficial
 
-Deploy ativo no Render usa runtime Node com `render.yaml`.
+Deploy ativo no Render usa o `Dockerfile` do repositório (o serviço no Render está configurado como Docker, não como runtime Node nativo — `render.yaml` reflete a intenção original mas não controla este serviço, que foi criado manualmente).
 
 - URL atual de produção: `https://pardogo-8yn0.onrender.com`
-- build command: `npm ci --omit=dev`
-- start command: `npm run start`
+- build: `docker build` a partir do `Dockerfile` (que roda `npm ci --omit=dev` internamente)
+- start: `CMD ["node", "backend/server.js"]` (definido no `Dockerfile`)
 - health check: `/api/health`
 - banco: Postgres gerenciado pelo Supabase, via `DATABASE_URL`
 

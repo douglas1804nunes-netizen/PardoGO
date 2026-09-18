@@ -1,0 +1,7 @@
+node_modules
+npm-debug.log
+android
+.env
+.git
+.claude
+.vscode
