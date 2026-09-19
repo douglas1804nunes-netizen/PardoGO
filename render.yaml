@@ -49,5 +49,3 @@ services:
         value: "60000"
       - key: DRIVER_LOCATION_STALE_SECONDS
         value: "120"
-      - key: GOOGLE_CLIENT_ID
-        sync: false

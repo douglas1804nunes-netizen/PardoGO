@@ -30,7 +30,6 @@ const ADMIN_INITIAL_PHONE = ADMIN_INITIAL_PHONE_RAW === ADMIN_LEGACY_ALIAS
   ? ADMIN_LEGACY_ALIAS
   : ADMIN_INITIAL_PHONE_RAW.replace(/\D/g, '');
 const ADMIN_INITIAL_PASSWORD = String(envConfig.ADMIN_INITIAL_PASSWORD || '');
-const GOOGLE_CLIENT_ID = String(envConfig.GOOGLE_CLIENT_ID || '').trim();
 const FORCE_HTTPS = envConfig.FORCE_HTTPS === true;
 const TRUST_PROXY = envConfig.TRUST_PROXY === true;
 const REQUIRE_SECURE_ENV = envConfig.REQUIRE_SECURE_ENV === true;
@@ -82,6 +81,8 @@ const sseTickets = new Map();
 const SSE_PING_MS = Number(envConfig.SSE_PING_MS || 25000);
 const SSE_TICKET_TTL_MS = Number(envConfig.SSE_TICKET_TTL_MS || 60_000);
 const PAYMENT_METHODS = ['Pix', 'Dinheiro'];
+const GENDER_OPTIONS = ['female', 'male', 'other', 'unspecified'];
+const MIN_USER_AGE_YEARS = 16;
 
 const FIXED_FARE_BRL = 20;
 
@@ -127,6 +128,9 @@ async function migrate() {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       phone TEXT NOT NULL UNIQUE,
+      email TEXT DEFAULT '',
+      birthdate TEXT,
+      gender TEXT NOT NULL DEFAULT 'unspecified',
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL CHECK (role IN ('admin', 'passenger', 'driver')),
       status TEXT NOT NULL CHECK (status IN ('active', 'pending', 'approved', 'blocked')),
@@ -152,6 +156,10 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS idx_users_role_status ON users(role, status);
     CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_single_admin_role ON users(role) WHERE role = 'admin';
+
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT DEFAULT '';
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS birthdate TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT 'unspecified';
 
     CREATE TABLE IF NOT EXISTS rides (
       id TEXT PRIMARY KEY,
@@ -324,20 +332,6 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 
-    CREATE TABLE IF NOT EXISTS oauth_accounts (
-      id TEXT PRIMARY KEY,
-      provider TEXT NOT NULL,
-      provider_user_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      email TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      UNIQUE(provider, provider_user_id),
-      FOREIGN KEY(user_id) REFERENCES users(id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id);
-
     CREATE TABLE IF NOT EXISTS audit_logs (
       id TEXT PRIMARY KEY,
       actor_user_id TEXT,
@@ -448,6 +442,22 @@ function isStrongPassword(value) {
   return /^(?=.*[A-Z])(?=.*[^A-Za-z0-9]).{6,}$/.test(text);
 }
 
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+}
+
+function isValidGender(value) {
+  return GENDER_OPTIONS.includes(String(value || ''));
+}
+
+function isValidBirthdate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.getTime() > Date.now()) return false;
+  const ageYears = (Date.now() - date.getTime()) / (365.25 * 24 * 3600 * 1000);
+  return ageYears >= MIN_USER_AGE_YEARS && ageYears < 120;
+}
+
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex'), iterations = 180000) {
   const hash = crypto.pbkdf2Sync(String(password), salt, iterations, 32, 'sha256').toString('hex');
   return `pbkdf2_sha256$${iterations}$${salt}$${hash}`;
@@ -512,12 +522,15 @@ async function cleanupSessions() {
   await dbRun('DELETE FROM sessions WHERE expires_at < ? OR revoked_at IS NOT NULL', [new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()]);
 }
 
-function createUserObject({ name, phone, password, role, vehicle, plate, cnhNumber, vehicleModel, vehicleColor, documentStatus, documentsNote, termsAccepted, privacyAccepted, status }) {
+function createUserObject({ name, phone, password, role, vehicle, plate, cnhNumber, vehicleModel, vehicleColor, documentStatus, documentsNote, termsAccepted, privacyAccepted, status, email, birthdate, gender }) {
   const now = nowIso();
   return {
     id: crypto.randomUUID(),
     name: String(name || '').trim(),
     phone: normalizePhone(phone),
+    email: email ? String(email).trim().toLowerCase() : '',
+    birthdate: birthdate || null,
+    gender: isValidGender(gender) ? gender : 'unspecified',
     passwordHash: hashPassword(password),
     role,
     status: status || (role === 'driver' ? 'pending' : 'active'),
@@ -541,14 +554,17 @@ function createUserObject({ name, phone, password, role, vehicle, plate, cnhNumb
 async function insertUser(user) {
   await dbRun(`
     INSERT INTO users (
-      id, name, phone, password_hash, role, status, online, wallet_balance, vehicle, plate,
+      id, name, phone, email, birthdate, gender, password_hash, role, status, online, wallet_balance, vehicle, plate,
       cnh_number, vehicle_model, vehicle_color, document_status, documents_note, terms_accepted_at, privacy_accepted_at,
       last_lat, last_lng, last_accuracy, last_location_updated_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     user.id,
     user.name,
     user.phone,
+    user.email || '',
+    user.birthdate || null,
+    user.gender || 'unspecified',
     user.passwordHash,
     user.role,
     user.status,
@@ -585,6 +601,9 @@ function rowToUser(row) {
     id: row.id,
     name: row.name,
     phone: row.phone,
+    email: row.email || '',
+    birthdate: row.birthdate || null,
+    gender: row.gender || 'unspecified',
     passwordHash: row.password_hash,
     role: row.role,
     status: row.status,
@@ -634,61 +653,6 @@ async function getUserByPhone(phone) {
 
 async function getUserById(id) {
   return rowToUser(await dbGet('SELECT * FROM users WHERE id = ?', [id]));
-}
-
-async function getOAuthAccount(provider, providerUserId) {
-  return dbGet('SELECT * FROM oauth_accounts WHERE provider = ? AND provider_user_id = ?', [provider, providerUserId]);
-}
-
-async function createOAuthAccount({ provider, providerUserId, userId, email }) {
-  const now = nowIso();
-  const record = {
-    id: crypto.randomUUID(),
-    provider: String(provider || '').trim().toLowerCase(),
-    providerUserId: String(providerUserId || '').trim(),
-    userId,
-    email: email ? String(email).trim().toLowerCase() : null,
-    createdAt: now,
-    updatedAt: now
-  };
-  await dbRun(`
-    INSERT INTO oauth_accounts (id, provider, provider_user_id, user_id, email, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `, [record.id, record.provider, record.providerUserId, record.userId, record.email, record.createdAt, record.updatedAt]);
-  return record;
-}
-
-async function generateOAuthPlaceholderPhone() {
-  for (let i = 0; i < 10; i++) {
-    const candidate = `99${String(Date.now()).slice(-8)}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
-    if (!(await getUserByPhone(candidate))) return candidate;
-  }
-  return `99${String(Date.now()).slice(-8)}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
-}
-
-async function verifyGoogleCredential(credential) {
-  if (!GOOGLE_CLIENT_ID) {
-    throw new Error('Cadastro Google indisponível: GOOGLE_CLIENT_ID não configurado no servidor.');
-  }
-  const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(String(credential || ''))}`);
-  if (!response.ok) {
-    throw new Error('Token Google inválido ou expirado.');
-  }
-  const payload = await response.json();
-  if (payload.aud !== GOOGLE_CLIENT_ID) {
-    throw new Error('Token Google com client_id inválido para este aplicativo.');
-  }
-  if (!(payload.email_verified === 'true' || payload.email_verified === true)) {
-    throw new Error('Conta Google sem e-mail verificado.');
-  }
-  if (!payload.sub) {
-    throw new Error('Token Google sem identificador de usuário.');
-  }
-  return {
-    sub: String(payload.sub),
-    email: payload.email ? String(payload.email).toLowerCase() : null,
-    name: payload.name ? String(payload.name) : 'Usuário Google'
-  };
 }
 
 async function getAllUsers() {
@@ -871,13 +835,13 @@ function securityHeaders(extra = {}, req = null) {
     'Vary': 'Origin',
     'Content-Security-Policy': [
       "default-src 'self'",
-      "script-src 'self' https://unpkg.com https://accounts.google.com https://apis.google.com",
-      "script-src-elem 'self' https://unpkg.com https://accounts.google.com https://apis.google.com",
+      "script-src 'self' https://unpkg.com",
+      "script-src-elem 'self' https://unpkg.com",
       "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com",
       "img-src 'self' data: blob: https://api.qrserver.com https://*.tile.openstreetmap.org https://unpkg.com https://images.pexels.com",
       "font-src 'self' data: https://fonts.gstatic.com",
       connectSrc,
-      "frame-src 'self' https://accounts.google.com",
+      "frame-src 'self'",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'"
@@ -1380,32 +1344,55 @@ async function fetchJsonWithTimeout(url, timeoutMs = MAP_TIMEOUT_MS) {
   }
 }
 
+const ADDRESS_LABEL_CITY_MARKER = 'Santa Rita do Pardo';
+
+// Nominatim sempre lista do mais especifico pro mais genérico. Como todo resultado
+// já está restrito a esta cidade (viewbox + isWithinAllowedCity), cidade/estado/país
+// no fim do texto só atrapalham a leitura do nome da rua — cortamos a partir daí.
+function shortenAddressLabel(item) {
+  const displayName = String(item?.display_name || '').trim();
+  const road = item?.address?.road || item?.address?.pedestrian || item?.address?.footway;
+  const houseNumber = item?.address?.house_number;
+  if (road) return houseNumber ? `${road}, ${houseNumber}` : road;
+  const idx = displayName.indexOf(ADDRESS_LABEL_CITY_MARKER);
+  if (idx > 0) return displayName.slice(0, idx).replace(/,\s*$/, '').trim();
+  return displayName;
+}
+
 async function geocodeAddress(query) {
   const term = String(query || '').trim();
   if (!term) return [];
   const expanded = /santa rita/i.test(term) ? term : `${term}, Santa Rita do Pardo, Mato Grosso do Sul, Brasil`;
   const viewbox = viewboxParam(MAP_BOUNDING_BOX);
-  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&addressdetails=1&dedupe=1&countrycodes=br&viewbox=${encodeURIComponent(viewbox)}&bounded=1&q=${encodeURIComponent(expanded)}`;
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&addressdetails=1&dedupe=1&accept-language=pt-BR&countrycodes=br&viewbox=${encodeURIComponent(viewbox)}&bounded=1&q=${encodeURIComponent(expanded)}`;
   const results = await fetchJsonWithTimeout(url).catch(() => []);
-  return results
-    .filter(item => isWithinAllowedCity(item.lat, item.lon))
-    .map(item => ({
-      label: item.display_name,
+  const seenLabels = new Set();
+  const mapped = [];
+  for (const item of results) {
+    if (!isWithinAllowedCity(item.lat, item.lon)) continue;
+    const label = shortenAddressLabel(item);
+    const dedupeKey = label.toLowerCase();
+    if (seenLabels.has(dedupeKey)) continue;
+    seenLabels.add(dedupeKey);
+    mapped.push({
+      label,
       lat: roundCoord(item.lat),
       lng: roundCoord(item.lon),
       bbox: item.boundingbox || null,
       source: 'nominatim'
-    }));
+    });
+  }
+  return mapped;
 }
 
 async function reverseGeocodeCoords(lat, lng) {
   if (!isValidLatLng(lat, lng)) return null;
   if (!isWithinAllowedCity(lat, lng)) return null;
-  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1`;
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1&accept-language=pt-BR`;
   const data = await fetchJsonWithTimeout(url).catch(() => null);
   if (!data) return null;
   return {
-    label: String(data.display_name || '').trim(),
+    label: shortenAddressLabel(data),
     lat: roundCoord(data.lat ?? lat),
     lng: roundCoord(data.lon ?? lng),
     source: 'nominatim-reverse'
@@ -1920,8 +1907,8 @@ async function handleApi(req, res, url) {
       const body = await parseBody(req);
       const role = body.role === 'driver' ? 'driver' : 'passenger';
       const required = role === 'driver'
-        ? ['name', 'phone', 'password', 'vehicle', 'plate']
-        : ['name', 'phone', 'password'];
+        ? ['name', 'phone', 'password', 'vehicle', 'plate', 'birthdate', 'gender']
+        : ['name', 'phone', 'password', 'birthdate', 'gender'];
       const missing = validateRequired(required, body);
       if (missing) return send(res, 400, { ok: false, error: missing });
       const normalizedName = String(body.name || '').replace(/\s+/g, ' ').trim();
@@ -1930,6 +1917,15 @@ async function handleApi(req, res, url) {
       }
       if (!isStrongPassword(body.password)) {
         return send(res, 400, { ok: false, error: 'A senha precisa ter no mínimo 6 caracteres, 1 letra maiúscula e 1 caractere especial.' });
+      }
+      if (!isValidBirthdate(body.birthdate)) {
+        return send(res, 400, { ok: false, error: `Informe uma data de nascimento válida (idade mínima de ${MIN_USER_AGE_YEARS} anos).` });
+      }
+      if (!isValidGender(body.gender)) {
+        return send(res, 400, { ok: false, error: 'Selecione uma opção de sexo.' });
+      }
+      if (body.email && !isValidEmail(body.email)) {
+        return send(res, 400, { ok: false, error: 'Informe um e-mail válido.' });
       }
       if (!(body.acceptTerms === true || body.acceptTerms === 'on' || body.acceptTerms === 'true')) {
         return send(res, 400, { ok: false, error: 'É necessário aceitar os termos de uso.' });
@@ -1959,7 +1955,10 @@ async function handleApi(req, res, url) {
         vehicleColor: body.vehicleColor,
         documentStatus: role === 'driver' ? 'pending_review' : 'not_sent',
         termsAccepted: true,
-        privacyAccepted: true
+        privacyAccepted: true,
+        email: body.email,
+        birthdate: body.birthdate,
+        gender: body.gender
       });
       try {
         await insertUser(user);
@@ -2020,49 +2019,6 @@ async function handleApi(req, res, url) {
       });
     }
 
-    if (method === 'POST' && pathname === '/api/auth/google') {
-      await cleanupSessions();
-      const body = await parseBody(req);
-      const credential = String(body.credential || '').trim();
-      if (!credential) return send(res, 400, { ok: false, error: 'Token Google não informado.' });
-
-      const google = await verifyGoogleCredential(credential);
-      const oauth = await getOAuthAccount('google', google.sub);
-
-      let user = oauth ? await getUserById(oauth.user_id) : null;
-      if (!user) {
-        const role = body.role === 'driver' ? 'driver' : 'passenger';
-        const created = createUserObject({
-          name: google.name,
-          phone: await generateOAuthPlaceholderPhone(),
-          password: crypto.randomBytes(24).toString('hex'),
-          role,
-          status: role === 'driver' ? 'pending' : 'active',
-          documentStatus: role === 'driver' ? 'pending_review' : 'not_sent',
-          termsAccepted: true,
-          privacyAccepted: true
-        });
-        await insertUser(created);
-        await createOAuthAccount({ provider: 'google', providerUserId: google.sub, userId: created.id, email: google.email });
-        user = created;
-      }
-
-      if (user.status === 'blocked') {
-        return send(res, 403, { ok: false, error: 'Usuário bloqueado.' });
-      }
-
-      const session = await createSession(user, req);
-      return send(res, 200, {
-        ok: true,
-        token: session.token,
-        expiresAt: session.expiresAt,
-        user: await publicUser(user),
-        message: user.role === 'driver' && user.status !== 'approved'
-          ? 'Acesso com Google realizado. Seu cadastro de motorista ainda está em análise.'
-          : 'Acesso com Google realizado com sucesso.'
-      });
-    }
-
     if (method === 'POST' && pathname === '/api/auth/logout') {
       await revokeSession(getBearerToken(req));
       return send(res, 200, { ok: true });
@@ -2072,6 +2028,75 @@ async function handleApi(req, res, url) {
       const user = await requireAuth(req, res);
       if (!user) return;
       return send(res, 200, { ok: true, user: await publicUser(user) });
+    }
+
+    if (method === 'PATCH' && pathname === '/api/me') {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const body = await parseBody(req);
+
+      const nextName = body.name !== undefined
+        ? String(body.name || '').replace(/\s+/g, ' ').trim()
+        : user.name;
+      if (nextName.length < 2) {
+        return send(res, 400, { ok: false, error: 'Informe seu nome.' });
+      }
+
+      const nextPhone = body.phone !== undefined ? normalizePhone(body.phone) : user.phone;
+      if (!isValidPhone(nextPhone)) {
+        return send(res, 400, { ok: false, error: 'Informe um telefone válido com DDD.' });
+      }
+      if (nextPhone !== user.phone) {
+        if (nextPhone === ADMIN_INITIAL_PHONE) {
+          return send(res, 400, { ok: false, error: 'Este identificador é reservado para o administrador.' });
+        }
+        const existing = await getUserByPhone(nextPhone);
+        if (existing && existing.id !== user.id) {
+          return send(res, 409, { ok: false, error: 'Telefone já cadastrado.' });
+        }
+      }
+
+      const nextEmail = body.email !== undefined ? String(body.email || '').trim().toLowerCase() : (user.email || '');
+      if (nextEmail && !isValidEmail(nextEmail)) {
+        return send(res, 400, { ok: false, error: 'Informe um e-mail válido.' });
+      }
+
+      const nextBirthdate = body.birthdate !== undefined ? body.birthdate : user.birthdate;
+      if (body.birthdate !== undefined && !isValidBirthdate(nextBirthdate)) {
+        return send(res, 400, { ok: false, error: `Informe uma data de nascimento válida (idade mínima de ${MIN_USER_AGE_YEARS} anos).` });
+      }
+
+      const nextGender = body.gender !== undefined ? body.gender : user.gender;
+      if (body.gender !== undefined && !isValidGender(nextGender)) {
+        return send(res, 400, { ok: false, error: 'Selecione uma opção de sexo válida.' });
+      }
+
+      let nextPasswordHash = user.passwordHash;
+      if (body.newPassword) {
+        if (!verifyPassword(String(body.currentPassword || ''), user.passwordHash)) {
+          return send(res, 401, { ok: false, error: 'Senha atual incorreta.' });
+        }
+        if (!isStrongPassword(body.newPassword)) {
+          return send(res, 400, { ok: false, error: 'A nova senha precisa ter no mínimo 6 caracteres, 1 letra maiúscula e 1 caractere especial.' });
+        }
+        nextPasswordHash = hashPassword(body.newPassword);
+      }
+
+      const updatedAt = nowIso();
+      await dbRun(`
+        UPDATE users
+        SET name = ?, phone = ?, email = ?, birthdate = ?, gender = ?, password_hash = ?, updated_at = ?
+        WHERE id = ?
+      `, [nextName, nextPhone, nextEmail, nextBirthdate || null, nextGender, nextPasswordHash, updatedAt, user.id]);
+
+      await audit(user.id, 'update_profile', 'user', user.id, {
+        phoneChanged: nextPhone !== user.phone,
+        emailChanged: nextEmail !== (user.email || ''),
+        passwordChanged: nextPasswordHash !== user.passwordHash
+      });
+
+      const updatedUser = await getUserById(user.id);
+      return send(res, 200, { ok: true, user: await publicUser(updatedUser), message: 'Dados atualizados com sucesso.' });
     }
 
     if (method === 'GET' && pathname === '/api/config') {

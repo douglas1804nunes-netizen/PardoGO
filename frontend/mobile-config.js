@@ -7,7 +7,6 @@ window.PARDOGO_MOBILE_CONFIG = {
   enableApiSetupScreen: false,
   adminOnlyApk: false,
   adminWebOnly: true,
-  googleClientId: '',
   autoSelectProfile: true,
   profiles: {
     development: 'http://localhost:5173',

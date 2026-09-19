@@ -52,7 +52,6 @@
           <button type="submit">Entrar</button>
           <div class="auth-entry-actions">
             <button type="button" class="secondary" id="openRegisterBtn">Cadastro</button>
-            <button type="button" class="ghost dark" id="googleAuthBtn">Entrar com Google</button>
           </div>
           <small id="loginStatus" class="form-status muted" role="status" aria-live="polite">Informe seu telefone e senha para acessar.</small>
         </form>
@@ -78,6 +77,19 @@
           <label>Telefone
             <input name="phone" inputmode="tel" autocomplete="tel" placeholder="67999990000" required>
           </label>
+          <div class="grid two compact">
+            <label>Data de nascimento
+              <input name="birthdate" type="date" autocomplete="bday" required>
+            </label>
+            <label>Sexo
+              <select name="gender" required>
+                <option value="unspecified" selected>Prefiro não informar</option>
+                <option value="female">Feminino</option>
+                <option value="male">Masculino</option>
+                <option value="other">Outro</option>
+              </select>
+            </label>
+          </div>
           <label>Senha
             <div class="password-wrap">
               <input name="password" type="password" autocomplete="new-password" minlength="6" pattern="(?=.*[A-Z])(?=.*[^A-Za-z0-9]).{6,}" title="Use no mínimo 6 caracteres, com 1 letra maiúscula e 1 caractere especial." placeholder="Ex.: Senha@123" required>
@@ -113,7 +125,6 @@
           </label>
           <div class="auth-entry-actions">
             <button type="submit" class="secondary">Finalizar cadastro</button>
-            <button type="button" class="ghost dark" id="googleRegisterBtn">Continuar com Google</button>
             <button type="button" class="ghost dark" id="backToLoginBtn">Voltar</button>
           </div>
           <small id="registerStatus" class="form-status muted" role="status" aria-live="polite">Depois do cadastro, volte para o login e entre no sistema.</small>
@@ -128,7 +139,7 @@
         <p id="loggedDescription" class="muted">Use as abas abaixo para operar o sistema.</p>
       </div>
       <div class="logged-actions">
-        <button type="button" class="secondary" id="goToAreaBtn">Ir para minha área</button>
+        <button type="button" class="ghost dark" id="accountSettingsBtn">Configurações</button>
         <button type="button" class="ghost dark" id="logoutInlineBtn">Sair</button>
       </div>
     </section>
@@ -164,8 +175,6 @@
             </label>
             <div id="destinationAutocomplete" class="autocomplete-list hidden" role="listbox" aria-label="Sugestões de destino"></div>
             <div class="location-row">
-              <button type="button" id="lookupDestinationBtn" class="ghost dark">Buscar destino no mapa</button>
-              <button type="button" id="calculateRouteBtn" class="ghost dark">Calcular rota real</button>
               <small id="destinationText" class="muted">Destino ainda sem coordenadas.</small>
             </div>
             <small class="muted">Não achou o nome do lugar? Toque no mapa ao lado para marcar o ponto exato.</small>
@@ -477,7 +486,53 @@
     </article>
   </div>
 
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <div id="accountSettingsModal" class="permission-modal-backdrop hidden">
+    <article class="permission-modal account-settings-modal">
+      <p class="section-kicker">Configurações</p>
+      <h2>Meus dados</h2>
+      <p class="muted">Atualize seus dados de contato e de conta.</p>
+      <form id="accountSettingsForm" class="form">
+        <label>Nome completo
+          <input name="name" autocomplete="name" required>
+        </label>
+        <label>Telefone
+          <input name="phone" inputmode="tel" autocomplete="tel" required>
+        </label>
+        <label>E-mail
+          <input name="email" type="email" autocomplete="email" placeholder="seuemail@exemplo.com">
+        </label>
+        <div class="grid two compact">
+          <label>Data de nascimento
+            <input name="birthdate" type="date" autocomplete="bday">
+          </label>
+          <label>Sexo
+            <select name="gender">
+              <option value="unspecified">Prefiro não informar</option>
+              <option value="female">Feminino</option>
+              <option value="male">Masculino</option>
+              <option value="other">Outro</option>
+            </select>
+          </label>
+        </div>
+        <hr>
+        <p class="muted">Para trocar a senha, informe a senha atual e a nova senha.</p>
+        <div class="grid two compact">
+          <label>Senha atual
+            <input name="currentPassword" type="password" autocomplete="current-password">
+          </label>
+          <label>Nova senha
+            <input name="newPassword" type="password" autocomplete="new-password" minlength="6" pattern="(?=.*[A-Z])(?=.*[^A-Za-z0-9]).{6,}" title="Use no mínimo 6 caracteres, com 1 letra maiúscula e 1 caractere especial." placeholder="Ex.: Senha@123">
+          </label>
+        </div>
+        <div class="location-row spaced permission-modal-actions">
+          <button type="button" id="accountSettingsCloseBtn" class="ghost dark">Fechar</button>
+          <button type="submit" class="secondary">Salvar alterações</button>
+        </div>
+        <small id="accountSettingsStatus" class="form-status muted" role="status" aria-live="polite">As alterações valem para o próximo login.</small>
+      </form>
+    </article>
+  </div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="mobile-config.js"></script>
   <script src="services/permissions.js"></script>

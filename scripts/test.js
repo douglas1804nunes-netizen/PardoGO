@@ -11,7 +11,7 @@ const BASE = `http://localhost:${PORT}`;
 const ADMIN_PHONE = '67990000001';
 const ADMIN_PASSWORD = 'Admin#PardoGo123';
 const TEST_TABLES = [
-  'audit_logs', 'oauth_accounts', 'sessions', 'ride_reports', 'support_tickets',
+  'audit_logs', 'sessions', 'ride_reports', 'support_tickets',
   'ride_ratings', 'ride_contacts', 'pix_topups', 'wallet_transactions', 'rides',
   'users', 'tariff_rules', 'app_meta'
 ];
@@ -219,12 +219,12 @@ async function run() {
 
     await request('/api/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ name: 'Passageira Teste', phone: '67911110000', password: testPassword, role: 'passenger', acceptTerms: true, acceptPrivacy: true })
+      body: JSON.stringify({ name: 'Passageira Teste', phone: '67911110000', password: testPassword, role: 'passenger', birthdate: '1995-04-12', gender: 'female', acceptTerms: true, acceptPrivacy: true })
     });
 
     const driverRegister = await request('/api/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ name: 'Motorista Teste', phone: '67922220000', password: testPassword, role: 'driver', vehicle: 'Fiat Mobi', plate: 'ABC1D23', cnhNumber: '12345678900', vehicleModel: 'Mobi 2020', vehicleColor: 'Prata', acceptTerms: true, acceptPrivacy: true })
+      body: JSON.stringify({ name: 'Motorista Teste', phone: '67922220000', password: testPassword, role: 'driver', vehicle: 'Fiat Mobi', plate: 'ABC1D23', cnhNumber: '12345678900', vehicleModel: 'Mobi 2020', vehicleColor: 'Prata', birthdate: '1988-09-30', gender: 'male', acceptTerms: true, acceptPrivacy: true })
     });
 
     const adminLogin = await request('/api/auth/login', {
@@ -383,7 +383,7 @@ async function run() {
 
     await request('/api/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ name: 'Motorista Dois', phone: '67933330000', password: testPassword, role: 'driver', vehicle: 'Onix', plate: 'QWE1R23', acceptTerms: true, acceptPrivacy: true })
+      body: JSON.stringify({ name: 'Motorista Dois', phone: '67933330000', password: testPassword, role: 'driver', vehicle: 'Onix', plate: 'QWE1R23', birthdate: '1992-01-20', gender: 'male', acceptTerms: true, acceptPrivacy: true })
     });
     await request('/api/admin/drivers/approve-pending', {
       method: 'PATCH',

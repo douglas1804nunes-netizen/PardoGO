@@ -229,7 +229,6 @@ function getEnvConfig(overrides = {}) {
   const MAP_TIMEOUT_MS = toNumber(env.MAP_TIMEOUT_MS, 5500);
   const SSE_PING_MS = toNumber(env.SSE_PING_MS, 25000);
   const SSE_TICKET_TTL_MS = toNumber(env.SSE_TICKET_TTL_MS, 60_000);
-  const GOOGLE_CLIENT_ID = String(env.GOOGLE_CLIENT_ID || '').trim();
   const CORS_ALLOWED_ORIGINS = normalizeList(CORS_ORIGIN, [APP_BASE_URL]);
   return {
     NODE_ENV,
@@ -254,7 +253,6 @@ function getEnvConfig(overrides = {}) {
     MAP_TIMEOUT_MS,
     SSE_PING_MS,
     SSE_TICKET_TTL_MS,
-    GOOGLE_CLIENT_ID,
     CORS_ORIGIN,
     CORS_ALLOWED_ORIGINS,
     APP_BASE_ORIGIN: (() => { try { return new URL(APP_BASE_URL).origin; } catch { return ''; } })(),

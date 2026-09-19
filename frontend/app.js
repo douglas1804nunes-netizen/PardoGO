@@ -111,7 +111,6 @@ const state = {
   realtimeConnected: false,
   realtimeLastEventAt: null,
   apiBaseUrl: initialApiBaseUrl(),
-  googleAuthReady: false,
   addressSuggestions: {
     origin: [],
     destination: []
@@ -166,6 +165,16 @@ function debounce(fn, delay = 350) {
 function isStrongPassword(value) {
   const text = String(value || '');
   return /^(?=.*[A-Z])(?=.*[^A-Za-z0-9]).{6,}$/.test(text);
+}
+
+const MIN_USER_AGE_YEARS = 16;
+
+function isValidBirthdate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.getTime() > Date.now()) return false;
+  const ageYears = (Date.now() - date.getTime()) / (365.25 * 24 * 3600 * 1000);
+  return ageYears >= MIN_USER_AGE_YEARS && ageYears < 120;
 }
 
 function routeIntent() {
@@ -243,9 +252,6 @@ function apiModeLabel() {
   return base ? `API online: ${base}` : 'API local/mesmo domínio';
 }
 
-function googleClientId() {
-  return String(window.PARDOGO_MOBILE_CONFIG?.googleClientId || '').trim();
-}
 
 function toast(message, type = '') {
   const el = $('#toast');
@@ -693,63 +699,6 @@ function showLoginPanel() {
   $('#loginForm')?.elements?.phone?.focus();
 }
 
-async function handleGoogleCredential(credential, role = 'passenger') {
-  const data = await api('/api/auth/google', {
-    method: 'POST',
-    body: JSON.stringify({ credential, role })
-  });
-  saveSession(data.token, data.user);
-  setFormStatus('#loginStatus', data.message || 'Acesso com Google realizado com sucesso.', 'ok');
-  toast(data.message || 'Acesso com Google realizado com sucesso.', 'ok');
-  activateTab(targetAreaForCurrentUser());
-}
-
-function initGoogleAuth() {
-  const loginBtn = $('#googleAuthBtn');
-  const registerBtn = $('#googleRegisterBtn');
-  const clientId = googleClientId();
-
-  const setUnavailable = message => {
-    [loginBtn, registerBtn].forEach(btn => {
-      if (!btn) return;
-      btn.disabled = true;
-      btn.title = message;
-    });
-  };
-
-  if (!clientId) {
-    setUnavailable('Defina googleClientId em frontend/mobile-config.js para habilitar o Google.');
-    return;
-  }
-
-  const triggerGoogle = role => {
-    if (!window.google?.accounts?.id) {
-      toast('Google ainda não carregou. Tente novamente em alguns segundos.', 'error');
-      return;
-    }
-    if (!state.googleAuthReady) {
-      window.google.accounts.id.initialize({
-        client_id: clientId,
-        callback: async response => {
-          try {
-            const desiredRole = sessionStorage.getItem('pardogo_google_role') || 'passenger';
-            await handleGoogleCredential(response.credential, desiredRole);
-          } catch (error) {
-            setFormStatus('#loginStatus', error.message, 'error');
-            toast(error.message, 'error');
-          }
-        }
-      });
-      state.googleAuthReady = true;
-    }
-    sessionStorage.setItem('pardogo_google_role', role);
-    window.google.accounts.id.prompt();
-  };
-
-  loginBtn?.addEventListener('click', () => triggerGoogle('passenger'));
-  registerBtn?.addEventListener('click', () => triggerGoogle($('#registerRole')?.value === 'driver' ? 'driver' : 'passenger'));
-}
-
 async function doLogout(message = 'Você saiu do sistema.') {
   try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
   clearSession();
@@ -996,13 +945,17 @@ function renderDriverRideMap() {
 function getRideFormCoords() {
   const form = $('#rideForm');
   if (!form) return { origin: null, destination: null };
-  const originLat = Number(form.elements.originLat.value);
-  const originLng = Number(form.elements.originLng.value);
-  const destinationLat = Number(form.elements.destinationLat.value);
-  const destinationLng = Number(form.elements.destinationLng.value);
+  const originLatRaw = form.elements.originLat.value;
+  const originLngRaw = form.elements.originLng.value;
+  const destinationLatRaw = form.elements.destinationLat.value;
+  const destinationLngRaw = form.elements.destinationLng.value;
+  const originLat = Number(originLatRaw);
+  const originLng = Number(originLngRaw);
+  const destinationLat = Number(destinationLatRaw);
+  const destinationLng = Number(destinationLngRaw);
   return {
-    origin: Number.isFinite(originLat) && Number.isFinite(originLng) ? { lat: originLat, lng: originLng } : null,
-    destination: Number.isFinite(destinationLat) && Number.isFinite(destinationLng) ? { lat: destinationLat, lng: destinationLng } : null
+    origin: originLatRaw !== '' && originLngRaw !== '' && Number.isFinite(originLat) && Number.isFinite(originLng) ? { lat: originLat, lng: originLng } : null,
+    destination: destinationLatRaw !== '' && destinationLngRaw !== '' && Number.isFinite(destinationLat) && Number.isFinite(destinationLng) ? { lat: destinationLat, lng: destinationLng } : null
   };
 }
 
@@ -1277,8 +1230,8 @@ function drawLeafletRoute(originLabel, destinationLabel, originCoords, destinati
     state.routeLayer = L.polyline([[originCoords.lat, originCoords.lng], [destinationCoords.lat, destinationCoords.lng]], { weight: 4, dashArray: '8,8', opacity: 0.65 }).addTo(state.map);
   }
 
-  if (bounds.length >= 2) state.map.fitBounds(bounds, { padding: [28, 28], maxZoom: 16 });
-  if (bounds.length === 1) state.map.setView(bounds[0], 15);
+  if (bounds.length >= 2) state.map.fitBounds(bounds, { padding: [28, 28], maxZoom: 17 });
+  if (bounds.length === 1) state.map.setView(bounds[0], 17);
 }
 
 async function handleRideMarkerDragEnd(type, next) {
@@ -1808,6 +1761,20 @@ function renderApiBaseStatus() {
   }
 }
 
+async function resolveFieldOnBlur(type) {
+  if (applyKnownSuggestion(type)) return;
+  const { origin, destination } = getRideFormCoords();
+  if (type === 'origin' && origin) return;
+  if (type === 'destination' && destination) return;
+  try {
+    await resolveRideFieldByGeocode(type);
+    renderRouteMap();
+    scheduleAutoEstimate();
+  } catch {
+    // Sem correspondencia: usuario ainda pode marcar o ponto direto no mapa.
+  }
+}
+
 function wireAddressAutocomplete() {
   const form = $('#rideForm');
   if (!form) return;
@@ -1815,10 +1782,8 @@ function wireAddressAutocomplete() {
   const destinationInput = form.elements.destination;
   originInput?.addEventListener('input', () => requestAddressSuggestions('origin', originInput.value));
   destinationInput?.addEventListener('input', () => requestAddressSuggestions('destination', destinationInput.value));
-  originInput?.addEventListener('change', () => { applyKnownSuggestion('origin'); });
-  destinationInput?.addEventListener('change', () => { applyKnownSuggestion('destination'); });
-  originInput?.addEventListener('blur', () => { applyKnownSuggestion('origin'); });
-  destinationInput?.addEventListener('blur', () => { applyKnownSuggestion('destination'); });
+  originInput?.addEventListener('blur', () => { resolveFieldOnBlur('origin'); });
+  destinationInput?.addEventListener('blur', () => { resolveFieldOnBlur('destination'); });
 
   document.body.addEventListener('click', event => {
     const suggestion = event.target.closest('[data-autocomplete-type][data-autocomplete-index]');
@@ -1951,7 +1916,6 @@ function wireEvents() {
     });
   });
 
-  $('#goToAreaBtn')?.addEventListener('click', () => activateTab(targetAreaForCurrentUser()));
   $('#logoutInlineBtn')?.addEventListener('click', () => doLogout());
 
   $('#requestLocationBtn')?.addEventListener('click', requestLocationPermission);
@@ -1961,12 +1925,6 @@ function wireEvents() {
   $('#driverLocationBtn').addEventListener('click', updateDriverLocation);
   $('#lookupOriginBtn').addEventListener('click', async () => {
     try { await geocodeField('origin'); } catch (error) { toast(error.message, 'error'); }
-  });
-  $('#lookupDestinationBtn').addEventListener('click', async () => {
-    try { await geocodeField('destination'); } catch (error) { toast(error.message, 'error'); }
-  });
-  $('#calculateRouteBtn').addEventListener('click', async () => {
-    try { await calculateRoute(); await estimateFare(); } catch (error) { toast(error.message, 'error'); }
   });
 
   $('#loginForm').addEventListener('submit', async event => {
@@ -2017,6 +1975,10 @@ function wireEvents() {
       body.vehicleColor = sanitizeText(body.vehicleColor);
       if (!body.name || body.name.length < 2) throw new Error('Informe seu nome.');
       if (!body.phone) throw new Error('Informe seu telefone com DDD.');
+      if (!isValidBirthdate(body.birthdate)) {
+        throw new Error(`Informe uma data de nascimento válida (idade mínima de ${MIN_USER_AGE_YEARS} anos).`);
+      }
+      if (!body.gender) throw new Error('Selecione uma opção de sexo.');
       if (!body.password || !isStrongPassword(body.password)) {
         throw new Error('A senha precisa ter no mínimo 6 caracteres, 1 letra maiúscula e 1 caractere especial.');
       }
@@ -2291,7 +2253,6 @@ function wireEvents() {
 
 async function boot() {
   wireEvents();
-  initGoogleAuth();
   if (state.token && shouldForceLoginLanding()) {
     clearSession();
     console.info('[PardoGo Auth] Sessao persistida ignorada no carregamento inicial.');
