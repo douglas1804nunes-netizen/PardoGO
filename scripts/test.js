@@ -3,16 +3,16 @@ const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
 const { Client } = require('pg');
+const { resolveTestDatabaseUrl } = require('./lib/test-db');
 
 const ROOT = path.join(__dirname, '..');
-const DATABASE_URL = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
 const PORT = 5199;
 const BASE = `http://localhost:${PORT}`;
 const ADMIN_PHONE = '67990000001';
 const ADMIN_PASSWORD = 'Admin#PardoGo123';
 const TEST_TABLES = [
   'audit_logs', 'sessions', 'ride_reports', 'support_tickets',
-  'ride_ratings', 'ride_contacts', 'pix_topups', 'wallet_transactions', 'rides',
+  'ride_ratings', 'ride_contacts', 'rides',
   'users', 'tariff_rules', 'app_meta'
 ];
 
@@ -20,10 +20,10 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function resetTestDatabase() {
+async function resetTestDatabase(databaseUrl) {
   const client = new Client({
-    connectionString: DATABASE_URL,
-    ssl: /localhost|127\.0\.0\.1/i.test(DATABASE_URL) ? false : { rejectUnauthorized: false }
+    connectionString: databaseUrl,
+    ssl: /localhost|127\.0\.0\.1/i.test(databaseUrl) ? false : { rejectUnauthorized: false }
   });
   await client.connect();
   try {
@@ -132,10 +132,8 @@ async function openSse(token) {
 }
 
 async function run() {
-  if (!DATABASE_URL) {
-    throw new Error('Defina DATABASE_URL (ou TEST_DATABASE_URL) apontando para um banco Postgres/Supabase de testes antes de rodar npm test.');
-  }
-  await resetTestDatabase();
+  const DATABASE_URL = resolveTestDatabaseUrl();
+  await resetTestDatabase(DATABASE_URL);
 
   const server = spawn(process.execPath, ['--no-warnings', 'backend/server.js'], {
     cwd: ROOT,
@@ -170,6 +168,22 @@ async function run() {
     if (!Object.prototype.hasOwnProperty.call(health, 'renderCommit')) throw new Error('Health não expôs campo renderCommit.');
     if (!Object.prototype.hasOwnProperty.call(health, 'renderBranch')) throw new Error('Health não expôs campo renderBranch.');
     if (!Object.prototype.hasOwnProperty.call(health, 'renderRepo')) throw new Error('Health não expôs campo renderRepo.');
+
+    const staticPages = [
+      ['/', 'text/html', 'PardoGo'],
+      ['/app.js', 'application/javascript', 'wireEvents'],
+      ['/styles.css', 'text/css', '{'],
+      ['/manifest.json', 'application/json', '"name"']
+    ];
+    for (const [pathname, contentType, marker] of staticPages) {
+      const response = await fetch(`${BASE}${pathname}`);
+      const body = await response.text();
+      if (response.status !== 200 || !String(response.headers.get('content-type') || '').includes(contentType) || !body.includes(marker)) {
+        throw new Error(`Frontend estático ${pathname} não foi servido corretamente (status ${response.status}).`);
+      }
+    }
+    const missingStatic = await fetch(`${BASE}/arquivo-inexistente.js`);
+    if (missingStatic.status !== 404) throw new Error('Arquivo estático inexistente deveria retornar 404.');
 
     const webhookDisabled = await requestRaw('/api/webhooks/pix/confirm', {
       method: 'POST',
@@ -593,11 +607,15 @@ async function run() {
   } finally {
     server.kill();
     await wait(300);
-    await resetTestDatabase();
+    await resetTestDatabase(DATABASE_URL);
   }
 }
 
 run().catch(error => {
-  console.error(`✗ ${error.message}`);
+  const causes = error.errors || [];
+  console.error(`✗ ${error.message || causes[0]?.message || error.code || String(error)}`);
+  if (error.code === 'ECONNREFUSED' || causes.some(cause => cause.code === 'ECONNREFUSED')) {
+    console.error('  Não consegui conectar no banco de testes. Suba o Postgres de testes com: npm run test:db');
+  }
   process.exit(1);
 });

@@ -1,10 +1,8 @@
 const assert = require('assert');
+const { resolveTestDatabaseUrl } = require('./lib/test-db');
 
 (async function run() {
-  const databaseUrl = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    throw new Error('Defina DATABASE_URL (ou TEST_DATABASE_URL) apontando para um banco Postgres/Supabase de testes.');
-  }
+  const databaseUrl = resolveTestDatabaseUrl();
 
   process.env.NODE_ENV = 'production';
   process.env.APP_BASE_URL = 'https://example.com';

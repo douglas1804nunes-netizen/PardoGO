@@ -47,6 +47,16 @@ http://localhost:5173
 
 ## Testes e diagnósticos
 
+Os testes **apagam tabelas**, então rodam só em um Postgres de testes, nunca no banco de produção. Defina `TEST_DATABASE_URL` no `.env` (o `npm test` recusa bancos remotos sem ela). Com o Docker Desktop aberto, este comando cria (ou inicia) um Postgres descartável em `localhost:55432`:
+
+```bash
+npm run test:db
+```
+
+E no `.env`: `TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:55432/postgres`.
+
+Depois:
+
 ```bash
 node --check backend/server.js
 npm test
