@@ -1,7 +1,5 @@
 const { Pool } = require('pg');
-const { AsyncLocalStorage } = require('async_hooks');
 
-const transactionContext = new AsyncLocalStorage();
 let pool = null;
 
 function isLocalConnection(connectionString) {
@@ -25,46 +23,23 @@ function toPositionalSql(sql) {
   return sql.replace(/\?/g, () => `$${++index}`);
 }
 
-function activeExecutor() {
-  return transactionContext.getStore() || pool;
-}
-
 async function dbExec(sql) {
-  return activeExecutor().query(sql);
+  return pool.query(sql);
 }
 
 async function dbGet(sql, params = []) {
-  const result = await activeExecutor().query(toPositionalSql(sql), params);
+  const result = await pool.query(toPositionalSql(sql), params);
   return result.rows[0];
 }
 
 async function dbAll(sql, params = []) {
-  const result = await activeExecutor().query(toPositionalSql(sql), params);
+  const result = await pool.query(toPositionalSql(sql), params);
   return result.rows;
 }
 
 async function dbRun(sql, params = []) {
-  const result = await activeExecutor().query(toPositionalSql(sql), params);
+  const result = await pool.query(toPositionalSql(sql), params);
   return { changes: result.rowCount, rows: result.rows };
-}
-
-async function withImmediateTransaction(work) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await transactionContext.run(client, work);
-    await client.query('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      await client.query('ROLLBACK');
-    } catch {
-      // Sem acao: rollback ja foi aplicado ou conexao encerrada.
-    }
-    throw error;
-  } finally {
-    client.release();
-  }
 }
 
 async function closePool() {
@@ -84,7 +59,6 @@ module.exports = {
   dbGet,
   dbAll,
   dbRun,
-  withImmediateTransaction,
   closePool,
   isUniqueConstraintError
 };

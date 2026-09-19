@@ -232,7 +232,6 @@ function getEnvConfig(overrides = {}) {
   const CORS_ALLOWED_ORIGINS = normalizeList(CORS_ORIGIN, [APP_BASE_URL]);
   return {
     NODE_ENV,
-    isProduction,
     PORT,
     APP_BASE_URL,
     CANONICAL_BASE_URL,
@@ -267,12 +266,7 @@ function getEnvConfig(overrides = {}) {
   };
 }
 
-const envConfig = getEnvConfig();
-
 module.exports = {
-  loadEnvFile,
-  parseBoolean,
   validateEnvConfig,
-  getEnvConfig,
-  envConfig
+  getEnvConfig
 };
